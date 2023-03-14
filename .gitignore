@@ -196,3 +196,4 @@ camera_paths/
 vis_results/
 W/
 *.ply
+.VSCodeCounter
