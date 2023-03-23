@@ -34,7 +34,7 @@ python -m pip install --upgrade pip
 Install pytorch with CUDA (this repo has been tested with CUDA 11.7) and [tiny-cuda-nn](https://github.com/NVlabs/tiny-cuda-nn)
 
 ```bash
-pip install torch torchvision functorch --extra-index-url https://download.pytorch.org/whl/cu117
+pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 --extra-index-url https://download.pytorch.org/whl/cu117
 pip install git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
 ```
 
