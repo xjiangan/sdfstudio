@@ -1,0 +1,6 @@
+[submodule "preprocessor/pips"]
+	path = preprocessor/pips
+	url = https://github.com/aharley/pips.git
+[submodule "preprocessor/manydepth"]
+	path = preprocessor/manydepth
+	url = https://github.com/nianticlabs/manydepth.git
