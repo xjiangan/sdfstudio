@@ -3,17 +3,19 @@ import sys
 from itertools import product
 from os import path
 
-sys.path.append(path.join(path.dirname(__file__), "pips"))
-
 import numpy as np
 import torch
 import torchvision.transforms.functional as F
-from pips import saverloader
-from pips.nets.pips import Pips
+
+# from pips import saverloader
+# from pips.nets.pips import Pips
 from scipy.interpolate import RegularGridInterpolator
 from torchvision.io import read_image, read_video
 from torchvision.models.optical_flow import Raft_Large_Weights, raft_large
 from tqdm import tqdm, trange
+
+# sys.path.append(path.join(path.dirname(__file__), "pips"))
+
 
 
 class DataPreprocessorBase:
