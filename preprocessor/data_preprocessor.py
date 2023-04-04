@@ -20,7 +20,10 @@ class DataPreprocessorBase:
     def __init__(self, video_folder_path: str, f_name):
         self.base_folder = video_folder_path
         self.cache_folder = path.join(video_folder_path, self.__class__.__name__)
-        if not path.exists(self.cache_folder) or len([f for f in os.listdir(self.cache_folder) if f.endswith(".npy")]) == 0:
+        if (
+            not path.exists(self.cache_folder)
+            or len([f for f in os.listdir(self.cache_folder) if f.endswith(".npy")]) == 0
+        ):
             if not path.exists(self.cache_folder):
                 os.mkdir(self.cache_folder)
             if isinstance(f_name, (str, bytes)):
@@ -111,64 +114,70 @@ class OpticalFlowRAFT(DataPreprocessorBase):
         return RegularGridInterpolator((self.ys, self.xs), flow, bounds_error=False, fill_value=0)((loc_x, loc_y))
 
 
-class OptitalFlowPIPS(DataPreprocessorBase):
-    def __init__(self, video_folder_path: str, f_name="video.mp4"):
-        self.model_input_H = 360
-        self.model_input_W = 640
-        super().__init__(video_folder_path, f_name)
-        self.flows = self.load_cached()
+# class OptitalFlowPIPS(DataPreprocessorBase):
+#     def __init__(self, video_folder_path: str, f_name="video.mp4"):
+#         self.model_input_H = 360
+#         self.model_input_W = 640
+#         super().__init__(video_folder_path, f_name)
+#         self.flows = self.load_cached()
 
-    def load_cached(self):
-        self.n_frames = len([f for f in os.listdir(self.cache_folder) if f.endswith(".npy")])
-        return np.stack([np.load(path.join(self.cache_folder, f"{i}.npy")) for i in range(self.n_frames)])
+#     def load_cached(self):
+#         self.n_frames = len([f for f in os.listdir(self.cache_folder) if f.endswith(".npy")])
+#         return np.stack([np.load(path.join(self.cache_folder, f"{i}.npy")) for i in range(self.n_frames)])
 
-    def init_meta(self, frames):
-        self.n_frames, _, self.img_h, self.img_w = frames.shape
-        np.savetxt(
-            path.join(self.cache_folder, "meta.txt"), np.asarray([self.n_frames, self.img_h, self.img_w]), fmt="%d"
-        )
+#     def init_meta(self, frames):
+#         self.n_frames, _, self.img_h, self.img_w = frames.shape
+#         np.savetxt(
+#             path.join(self.cache_folder, "meta.txt"), np.asarray([self.n_frames, self.img_h, self.img_w]), fmt="%d"
+#         )
 
-    def load_meta(self):
-        self.n_frames, self.img_h, self.img_w = np.loadtxt(path.join(self.cache_folder, "meta.txt")).astype(int)
+#     def load_meta(self):
+#         self.n_frames, self.img_h, self.img_w = np.loadtxt(path.join(self.cache_folder, "meta.txt")).astype(int)
 
-    def infer(self, model, frame_a, frame_b, _batch_stride):
-        frame_a = F.resize(frame_a, [self.model_input_H, self.model_input_W])
-        frame_b = F.resize(frame_b, [self.model_input_H, self.model_input_W])
-        rgbs = torch.stack([frame_a, frame_b])
-        result = np.empty([self.model_input_H, self.model_input_W, 2])
-        for p in range(10):
-            batch_stride = _batch_stride * 2**p
-            try:
-                batch_coords = np.mgrid[0 : self.model_input_H : batch_stride, 0 : self.model_input_W : batch_stride]
-                batch_coords = batch_coords.reshape(2, -1)
-                for i, j in product(range(batch_stride), repeat=2):
-                    curr_coords = batch_coords + np.array([i, j])[:, None]
-                    curr_coords = curr_coords[
-                        :, np.logical_and(curr_coords[0] < self.model_input_H, curr_coords[1] < self.model_input_W)
-                    ]
-                    xy = torch.from_numpy(curr_coords + 0.5).cuda()
-                    preds, preds_anim, vis_e, stats = model(xy, rgbs, iters=6)
-                    trajs_e = preds[-1]
-                    result[curr_coords] = trajs_e
-                return result, batch_stride
-            except:
-                pass
+#     def infer(self, model, frame_a, frame_b, _batch_stride):
+#         frame_a = F.resize(frame_a, [self.model_input_H, self.model_input_W])
+#         frame_b = F.resize(frame_b, [self.model_input_H, self.model_input_W])
+#         rgbs = torch.stack([frame_a, frame_b]).unsqueeze(0)
+#         result = np.empty([self.model_input_H, self.model_input_W, 2])
+#         for p in range(10):
+#             batch_stride = _batch_stride * 2**p
+#             try:
+#                 batch_coords = np.mgrid[0 : self.model_input_H : batch_stride, 0 : self.model_input_W : batch_stride]
+#                 batch_coords = batch_coords.reshape(2, -1)
+#                 for i, j in product(range(batch_stride), repeat=2):
+#                     curr_coords = batch_coords + np.array([i, j])[:, None]
+#                     curr_coords = curr_coords[
+#                         None,
+#                         :,
+#                         np.logical_and(curr_coords[0] < self.model_input_H, curr_coords[1] < self.model_input_W),
+#                     ]
+#                     xy = torch.from_numpy(np.transpose(curr_coords[:, [1, 0], :], [0, 2, 1]) + 0.5).float().cuda()
+#                     preds, _, _, _ = model(xy, rgbs, iters=6)
+#                     trajs_e = preds[-1]
+#                     result[curr_coords[0, 0], curr_coords[0, 1]] = (trajs_e - xy).cpu().numpy()
+#                 return result, batch_stride
+#             except RuntimeError as e:
+#                 if "out of memory" in str(e):
+#                     print(f"| WARNING: ran out of memory, retrying with batch stride {batch_stride}")
+#                     torch.cuda.empty_cache()
+#                 else:
+#                     raise e
 
-    def preprocess(self, frames):
-        model = Pips(stride=4).cuda()
-        model_ckpt_path = os.path.join(os.path.dirname(__file__), "models/pips")
-        saverloader.load(model_ckpt_path, model)
-        model.eval()
-        batch_stride = 1
+#     def preprocess(self, frames):
+#         model = Pips(stride=4).cuda()
+#         model_ckpt_path = os.path.join(os.path.dirname(__file__), "models/pips")
+#         saverloader.load(model_ckpt_path, model)
+#         model.eval()
+#         batch_stride = 1
 
-        for i in range(self.n_frames - 1):
-            frame_a = frames[i].cuda()
-            frame_b = frames[i + 1].cuda()
-            with torch.no_grad():
-                result, batch_stride = self.infer(model, frame_a, frame_b, batch_stride)
-                np.save(path.join(self.cache_folder, f"{i}.npy"), result)
+#         for i in range(self.n_frames - 1):
+#             frame_a = frames[i].cuda()
+#             frame_b = frames[i + 1].cuda()
+#             with torch.no_grad():
+#                 result, batch_stride = self.infer(model, frame_a, frame_b, batch_stride)
+#                 np.save(path.join(self.cache_folder, f"{i}.npy"), result)
 
 
 if __name__ == "__main__":
-    optical_flow = OptitalFlowPIPS("preprocessor\\test\\blackswan", (f"{i:05d}.jpg" for i in range(50)))
+    optical_flow = OpticalFlowRAFT("preprocessor\\test\\blackswan", (f"{i:05d}.jpg" for i in range(50)))
     print(optical_flow.at(10, [0], [0]))
