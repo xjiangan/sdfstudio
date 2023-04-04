@@ -57,7 +57,7 @@ class OpticalFlowRAFT(DataPreprocessorBase):
 
     def load_cached(self):
         self.n_frames = len([f for f in os.listdir(self.cache_folder) if f.endswith(".npy")])
-        return np.stack([np.load(path.join(self.cache_folder, "%d.npy" % i)) for i in range(self.n_frames)])
+        return np.stack([np.load(path.join(self.cache_folder, f"{i}.npy")) for i in range(self.n_frames)])
 
     def preprocess(self, frames):
         weights = Raft_Large_Weights.DEFAULT
@@ -78,7 +78,7 @@ class OpticalFlowRAFT(DataPreprocessorBase):
                 flows = model(batch1, batch2)[-1].cpu().numpy()
             flows = np.transpose(flows, [0, 2, 3, 1])
             for ii, f in enumerate(flows):
-                np.save(path.join(self.cache_folder, "%d.npy" % (ii + batch_start)), f)
+                np.save(path.join(self.cache_folder, f"{ii + batch_start}.npy"), f)
 
     def generate_grid(self):
         tmp = np.linspace(0, self.img_h, 520 + 1)
@@ -108,5 +108,5 @@ class OpticalFlowPIPS(DataPreprocessorBase):
 
 
 if __name__ == "__main__":
-    optical_flow = OpticalFlowRAFT("preprocessor\\test\\blackswan", ("%05d.jpg" % i for i in range(50)), 8)
+    optical_flow = OpticalFlowRAFT("preprocessor\\test\\blackswan", (f"{i:05d}.jpg" for i in range(50)), 8)
     print(optical_flow.at(10, [0], [0]))
