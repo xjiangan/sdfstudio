@@ -128,6 +128,12 @@ class NormalOmniData(DataPreprocessorBase):
         self.model_input_sz = 384
         super().__init__(video_folder_path, f_name)
         self.normals = self.load_cached()
+        self.model_input_W = self.normals.shape[2]
+        self.model_input_H = self.normals.shape[1]
+        tmp = np.linspace(0, self.img_h, self.model_input_H + 1)
+        self.ys = (tmp[1:] + tmp[:-1]) / 2
+        tmp = np.linspace(0, self.img_w, self.model_input_W + 1)
+        self.xs = (tmp[1:] + tmp[:-1]) / 2
 
     def load_cached(self):
         self.n_frames = len([f for f in os.listdir(self.cache_folder) if f.endswith(".npy")])
@@ -140,27 +146,58 @@ class NormalOmniData(DataPreprocessorBase):
     def load_meta(self):
         self.n_frames, self.img_h, self.img_w = np.loadtxt(path.join(self.cache_folder, "meta.txt")).astype(int)
 
-    def preprocess(self, frames):
-        # model_path = path.join(path.dirname(__file__), "models/omnidata/omnidata_dpt_normal_v2.ckpt")
-        # model = DPTDepthModel(backbone="vitb_rn50_384", num_channels=3)
-        # checkpoint = torch.load(model_path, map_location=lambda storage, _: storage.cuda())
-        # if "state_dict" in checkpoint:
-        #     state_dict = {}
-        #     for k, v in checkpoint["state_dict"].items():
-        #         state_dict[k[6:]] = v
-        #     else:
-        #         state_dict = checkpoint
+    def align_and_concat(self, frame_left, frame_right, true_width):
+        overlapped_region_width = self.model_input_sz * 2 - true_width
+        overlap_left_region = frame_left[:, :, -overlapped_region_width:]
+        overlap_right_region = frame_right[:, :, :overlapped_region_width]
+        left_non_overlap = frame_left[:, :, :-overlapped_region_width]
+        right_non_overlap = frame_right[:, :, overlapped_region_width:]
+        new_overlap = (overlap_left_region + overlap_right_region) / 2
+        result = np.concatenate([left_non_overlap, new_overlap, right_non_overlap], axis=2)
+        norms = np.linalg.norm(result, axis=0)
+        return result / norms[None, :, :]
 
-        # model.load_state_dict(state_dict)
-        # model.to("cuda")
-        # trans_totensor = transforms.Compose(
-        #     [
-        #         transforms.Resize(image_size, interpolation=PIL.Image.BILINEAR),
-        #         transforms.CenterCrop(image_size),
-        #         get_transform("rgb", image_size=None),
-        #     ]
-        # )
-        pass
+    def preprocess(self, frames):
+        model_path = path.join(path.dirname(__file__), "models/omnidata/omnidata_dpt_normal_v2.ckpt")
+        model = DPTDepthModel(backbone="vitb_rn50_384", num_channels=3)
+        checkpoint = torch.load(model_path, map_location=lambda storage, _: storage.cuda())
+        if "state_dict" in checkpoint:
+            state_dict = {}
+            for k, v in checkpoint["state_dict"].items():
+                state_dict[k[6:]] = v
+        else:
+            state_dict = checkpoint
+
+        model.load_state_dict(state_dict)
+        model.to("cuda")
+        model_img_sz = []
+
+        def get_sz(img):
+            model_img_sz.extend(img.shape[1:])
+            return img
+
+        trans_totensor = transforms.Compose(
+            [
+                transforms.ConvertImageDtype(torch.float32),
+                transforms.Resize(self.model_input_sz),
+                transforms.Lambda(get_sz),
+                transforms.FiveCrop(self.model_input_sz),
+                transforms.Lambda(lambda crops: torch.stack([crop for crop in crops[:2]])),
+            ]
+        )
+
+        for i, frame in enumerate(frames):
+            with torch.no_grad():
+                img_tensors = trans_totensor(frame).to("cuda")
+                model_output = model(img_tensors).clamp(0, 1).cpu().numpy()
+            final_output = self.align_and_concat(model_output[0], model_output[1], model_img_sz[1]).transpose(1, 2, 0)
+            np.save(path.join(self.cache_folder, f"{i}.npy"), final_output)
+
+    def at(self, frame_number, loc_x, loc_y):
+        assert 0 <= frame_number < self.n_frames
+        normal = self.normals[frame_number]
+        results = RegularGridInterpolator((self.ys, self.xs), normal, bounds_error=False, fill_value=0)((loc_y, loc_x))
+        return results
 
 
 class DepthOmniData(DataPreprocessorBase):
@@ -238,6 +275,7 @@ class DepthOmniData(DataPreprocessorBase):
                 transforms.Lambda(get_sz),
                 transforms.FiveCrop(self.model_input_sz),
                 transforms.Lambda(lambda crops: torch.stack([crop for crop in crops[:2]])),
+                transforms.Normalize(mean=0.5, std=0.5),
             ]
         )
 
@@ -320,5 +358,5 @@ class DepthOmniData(DataPreprocessorBase):
 
 
 if __name__ == "__main__":
-    optical_flow = DepthOmniData("preprocessor\\test\\blackswan", (f"{i:05d}.jpg" for i in range(50)))
+    optical_flow = NormalOmniData("preprocessor\\test\\blackswan", (f"{i:05d}.jpg" for i in range(50)))
     print(optical_flow.at(10, [0, 10, 100], [0, 10, 100]))
