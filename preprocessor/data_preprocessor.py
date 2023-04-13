@@ -86,6 +86,7 @@ class OpticalFlowRAFT(DataPreprocessorBase):
         return np.stack([np.load(path.join(self.cache_folder, f"{i}.npy")) for i in range(self.n_frames)])
 
     def preprocess(self, frames):
+        print("No cached results found, computing optical flow...")
         weights = Raft_Large_Weights.DEFAULT
         transforms = weights.transforms()
         model = raft_large(weights=Raft_Large_Weights.DEFAULT, progress=False).to("cuda")
@@ -158,6 +159,7 @@ class NormalOmniData(DataPreprocessorBase):
         return result / norms[None, :, :]
 
     def preprocess(self, frames):
+        print("No cached results found, computing normals...")
         model_path = path.join(path.dirname(__file__), "models/omnidata/omnidata_dpt_normal_v2.ckpt")
         model = DPTDepthModel(backbone="vitb_rn50_384", num_channels=3)
         checkpoint = torch.load(model_path, map_location=lambda storage, _: storage.cuda())
@@ -170,6 +172,7 @@ class NormalOmniData(DataPreprocessorBase):
 
         model.load_state_dict(state_dict)
         model.to("cuda")
+        model.eval()
         model_img_sz = []
 
         def get_sz(img):
@@ -186,7 +189,8 @@ class NormalOmniData(DataPreprocessorBase):
             ]
         )
 
-        for i, frame in enumerate(frames):
+        for i in trange(len(frames)):
+            frame = frames[i]
             with torch.no_grad():
                 img_tensors = trans_totensor(frame).to("cuda")
                 model_output = model(img_tensors).clamp(0, 1).cpu().numpy()
@@ -250,6 +254,7 @@ class DepthOmniData(DataPreprocessorBase):
         return result
 
     def preprocess(self, frames):
+        print("No cached results found, computing depths...")
         model_path = path.join(path.dirname(__file__), "models/omnidata/omnidata_dpt_depth_v2.ckpt")
         model = DPTDepthModel(backbone="vitb_rn50_384")
         checkpoint = torch.load(model_path, map_location=lambda storage, _: storage.cuda())
@@ -262,6 +267,7 @@ class DepthOmniData(DataPreprocessorBase):
 
         model.load_state_dict(state_dict)
         model.to("cuda")
+        model.eval()
         model_img_sz = []
 
         def get_sz(img):
@@ -279,7 +285,8 @@ class DepthOmniData(DataPreprocessorBase):
             ]
         )
 
-        for i, frame in enumerate(frames):
+        for i in trange(len(frames)):
+            frame = frames[i]
             with torch.no_grad():
                 img_tensors = trans_totensor(frame).to("cuda")
                 model_output = 1 - model(img_tensors).clamp(min=0.0, max=1.0).cpu().numpy()
