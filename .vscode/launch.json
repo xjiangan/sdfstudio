@@ -39,6 +39,28 @@
       ]
     },
     {
+      "name": "Python: train neus-facto",
+      "type": "python",
+      "request": "launch",
+      "program": "scripts/train.py",
+      "console": "integratedTerminal",
+      // "stopOnEntry": true,
+      "args": [
+
+        "neus-facto", 
+        "--pipeline.model.sdf-field.inside-outside", 
+        "False", 
+        // "--vis", 
+        // "viewer", 
+        "--viewer.websocket-port=8014",
+        "--experiment-name", 
+        "neus-facto-dtu65", 
+        "sdfstudio-data", 
+        "--data", 
+        "data/sdfstudio-demo-data/dtu-scan65"
+      ]
+    },
+    {
       "name": "Python: train mv-volsdf",
       "type": "python",
       "request": "launch",
