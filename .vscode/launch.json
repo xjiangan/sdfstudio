@@ -39,6 +39,20 @@
       ]
     },
     {
+      "name": "Python: davis nerfacto",
+      "type": "python",
+      "request": "launch",
+      "program": "scripts/train.py",
+      "console": "integratedTerminal",
+      // "stopOnEntry": true,
+      "args": [
+
+        "nerfacto", 
+        "--data", 
+        "data/davis/train"
+      ]
+    },
+    {
       "name": "Python: train neus-facto",
       "type": "python",
       "request": "launch",

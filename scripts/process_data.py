@@ -122,6 +122,7 @@ class ProcessDavis:
                 num_matched_frames = colmap_utils.colmap_to_json(
                     cameras_path=colmap_dir / "sparse" / "0" / "cameras.bin",
                     images_path=colmap_dir / "sparse" / "0" / "images.bin",
+                    mask_dir=mask_dir,
                     output_dir=self.output_dir,
                     camera_model=CAMERA_MODELS[self.camera_type],
                 )

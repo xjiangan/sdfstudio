@@ -178,7 +178,7 @@ def invert_mask(mask_dir: Path):
     for f1 in ls:
         f2=f1.with_suffix('.jpg.png')
         os.rename(f1,f2)
-        cv.imwrite(f2.as_posix(),255-cv.imread(f2.as_posix()))
+        cv.imwrite(f2.as_posix(),255-cv.imread(f2.as_posix(),cv.IMREAD_GRAYSCALE))
 
 
 def downscale_images(image_dir: Path, num_downscales: int, verbose: bool = False) -> str:

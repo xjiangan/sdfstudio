@@ -578,7 +578,7 @@ def run_colmap(
     CONSOLE.log("[bold green]:tada: Done refining intrinsics.")
 
 
-def colmap_to_json(cameras_path: Path, images_path: Path, output_dir: Path, camera_model: CameraModel) -> int:
+def colmap_to_json(cameras_path: Path, images_path: Path, output_dir: Path, camera_model: CameraModel, mask_dir: Optional[Path]=None) -> int:
     """Converts COLMAP's cameras.bin and images.bin to a JSON file.
 
     Args:
@@ -615,6 +615,8 @@ def colmap_to_json(cameras_path: Path, images_path: Path, output_dir: Path, came
             "file_path": name.as_posix(),
             "transform_matrix": c2w.tolist(),
         }
+        if mask_dir is not None:
+            frame['mask_path']= f'masks/{im_data.name}.png'
         frames.append(frame)
 
     out = {
