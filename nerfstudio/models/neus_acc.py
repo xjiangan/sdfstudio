@@ -119,6 +119,9 @@ class NeuSAccModel(NeuSModel):
                 n_rays=n_rays,
             )
 
+            # the rendered depth is point-to-point distance and we should convert to depth
+            depth = depth / ray_bundle.directions_norm
+
             outputs = {
                 "rgb": rgb,
                 "accumulation": accumulation,
@@ -135,6 +138,8 @@ class NeuSAccModel(NeuSModel):
             if self.training:
                 outputs.update({"eik_grad": zeros})
 
+        # this is used only in viewer
+        outputs["normal_vis"] = (outputs["normal"] + 1.0) / 2.0
         return outputs
 
     def get_metrics_dict(self, outputs, batch):
