@@ -18,7 +18,7 @@
 
 from abc import abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional, Type
+from typing import Optional, Tuple, Type
 
 import numpy as np
 from torch.optim import Optimizer, lr_scheduler
@@ -54,6 +54,34 @@ class Scheduler:
         Returns:
             The scheduler object.
         """
+
+
+@dataclass
+class MultiStepSchedulerConfig(SchedulerConfig):
+    """Config for multi step scheduler where lr decays by gamma every milestone"""
+
+    _target: Type = field(default_factory=lambda: MultiStepScheduler)
+    """target class to instantiate"""
+    max_steps: int = 1000000
+    """The maximum number of steps."""
+    gamma: float = 0.33
+    """The learning rate decay factor."""
+    milestones: Tuple[int, ...] = (500000, 750000, 900000)
+    """The milestone steps at which to decay the learning rate."""
+
+
+class MultiStepScheduler(Scheduler):
+    """Multi step scheduler where lr decays by gamma every milestone"""
+
+    config: MultiStepSchedulerConfig
+
+    def get_scheduler(self, optimizer: Optimizer, lr_init: float) -> lr_scheduler._LRScheduler:
+        scheduler = lr_scheduler.MultiStepLR(
+            optimizer=optimizer,
+            milestones=self.config.milestones,
+            gamma=self.config.gamma,
+        )
+        return scheduler
 
 
 @dataclass
@@ -104,6 +132,39 @@ class ExponentialDecayScheduler(Scheduler):
                 )
                 lr = np.exp(np.log(lr_init) * (1 - t) + np.log(lr_final) * t)
             return lr / lr_init  # divided by lr_init because the multiplier is with the initial learning rate
+
+        scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=func)
+        return scheduler
+
+
+@dataclass
+class CosineDecaySchedulerConfig(SchedulerConfig):
+    """Config for cosine decay schedule"""
+
+    _target: Type = field(default_factory=lambda: CosineDecayScheduler)
+    """target class to instantiate"""
+    warm_up_end: int = 5000
+    """Iteration number where warmp ends"""
+    learning_rate_alpha: float = 0.05
+    """Learning rate alpha value"""
+    max_steps: int = 300000
+    """The maximum number of steps."""
+
+
+class CosineDecayScheduler(Scheduler):
+    """Cosine decay scheduler with linear warmup"""
+
+    config: CosineDecaySchedulerConfig
+
+    def get_scheduler(self, optimizer: Optimizer, lr_init: float) -> lr_scheduler._LRScheduler:
+        def func(step):
+            if step < self.config.warm_up_end:
+                learning_factor = step / self.config.warm_up_end
+            else:
+                alpha = self.config.learning_rate_alpha
+                progress = (step - self.config.warm_up_end) / (self.config.max_steps - self.config.warm_up_end)
+                learning_factor = (np.cos(np.pi * progress) + 1.0) * 0.5 * (1 - alpha) + alpha
+            return learning_factor
 
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=func)
         return scheduler
