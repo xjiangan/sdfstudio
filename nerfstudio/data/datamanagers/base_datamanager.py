@@ -507,11 +507,11 @@ class OurDataManagerConfig(VanillaDataManagerConfig):
 
     _target: Type = field(default_factory=lambda: OurDataManager)
     """Target class to instantiate."""
-    train_num_images_to_sample_from: int = 1
-    """Number of images to sample during training iteration."""
+    # train_num_images_to_sample_from: int = 1
+    # """Number of images to sample during training iteration."""
 
 class OurDataManager(VanillaDataManager):
-    def next_train(self, step: int) -> Tuple[RayBundle, Dict]:
+    def next_train(self, step: int) -> Tuple[RayBundle, Dict, Dict]:
         """Returns the next batch of data from the train dataloader."""
         self.train_count += 1
         image_batch = next(self.iter_train_image_dataloader)
@@ -519,12 +519,25 @@ class OurDataManager(VanillaDataManager):
         ray_indices = batch["indices"]
         ray_bundle = self.train_ray_generator(ray_indices)
 
+
         additional_output = {}
+
+        # indices of pixels on source cameras: (num_rays, 2)
         additional_output["src_pixels"] = ray_bundle.coords[:, [1, 0]]
-        additional_output["src_cameras"] = self.train_dataset._dataparser_outputs.cameras[
-            image_batch["src_idxs"][0].to('cpu')]
-        additional_output["ref_cameras"] = self.train_dataset._dataparser_outputs.cameras[
-            image_batch["ref_idxs"][0].to('cpu')]
+
+        # indices of source cameras: (num_rays, )
+        src_indices = ray_bundle.camera_indices.to('cpu').squeeze()
+
+        # indices of source cameras whose reference cameras are not in training dataloader
+        mask_indices = ray_bundle.camera_indices.eq(ray_bundle.camera_indices.to('cpu').max())\
+            .long().to('cpu').squeeze().nonzero().squeeze()
+
+        # indices of reference cameras: (num_rays, )
+        ref_indices = src_indices + 1
+        ref_indices[mask_indices] = 0
+
+        additional_output["src_cameras"] = self.train_dataset.cameras[src_indices]
+        additional_output["ref_cameras"] = self.train_dataset.cameras[ref_indices]
+        additional_output["mask_indices"] = mask_indices
 
         return ray_bundle, batch, additional_output
-
