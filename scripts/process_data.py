@@ -7,8 +7,9 @@ import sys
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
+import cv2 as cv
 import numpy as np
 import tyro
 from rich.console import Console
@@ -28,6 +29,113 @@ from nerfstudio.utils import install_checks
 
 CONSOLE = Console(width=120)
 
+@dataclass
+class ProcessDavis:
+    """Process images into a nerfstudio dataset.
+
+    This script does the following:
+
+    1. Scales images to a specified size.
+    2. Calculates the camera poses for each image using `COLMAP <https://colmap.github.io/>`_.
+    """
+
+    data: Path
+    """Path the data, either a video file or a directory of images."""
+    output_dir: Path
+    """Path to the output directory."""
+    mask_dir: Path
+    """Path to the mask directory."""
+    camera_type: Literal["perspective", "fisheye"] = "perspective"
+    """Camera model to use."""
+    matching_method: Literal["exhaustive", "sequential", "vocab_tree"] = "exhaustive"
+    """Feature matching method to use. Vocab tree is recommended for a balance of speed and
+        accuracy. Exhaustive is slower but more accurate. Sequential is faster but should only be used for videos."""
+    sfm_tool: Literal["any", "colmap", "hloc"] = "colmap"
+    """Structure from motion tool to use. Colmap will use sift features, hloc can use many modern methods
+       such as superpoint features and superglue matcher"""
+    feature_type: Literal[
+        "any",
+        "sift",
+        "superpoint",
+        "superpoint_aachen",
+        "superpoint_max",
+        "superpoint_inloc",
+        "r2d2",
+        "d2net-ss",
+        "sosnet",
+        "disk",
+    ] = "any"
+    """Type of feature to use."""
+    matcher_type: Literal[
+        "any", "NN", "superglue", "superglue-fast", "NN-superpoint", "NN-ratio", "NN-mutual", "adalam"
+    ] = "any"
+    """Matching algorithm."""
+    skip_colmap: bool = False
+    """If True, skips COLMAP and generates transforms.json if possible."""
+    colmap_cmd: str = "colmap"
+    """How to call the COLMAP executable."""
+    gpu: bool = True
+    """If True, use GPU."""
+    verbose: bool = False
+    """If True, print extra logging."""
+
+    def main(self) -> None:
+        """Process images into a nerfstudio dataset."""
+        install_checks.check_ffmpeg_installed()
+        install_checks.check_colmap_installed()
+
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        image_dir = self.output_dir / "images"
+        image_dir.mkdir(parents=True, exist_ok=True)
+        mask_dir = self.output_dir / "masks"
+        mask_dir.mkdir(parents=True, exist_ok=True)
+
+        summary_log = []
+
+        # Copy images to output directory
+        num_frames = process_data_utils.copy_images(self.data, image_dir=image_dir, verbose=self.verbose)
+        num_masks = process_data_utils.copy_images(self.mask_dir, image_dir=mask_dir, verbose=self.verbose)
+        summary_log.append(f"Starting with {num_frames} images {num_masks} masks")
+
+        # Invert masks
+        process_data_utils.invert_mask(mask_dir)
+
+        # Run COLMAP
+        colmap_dir = self.output_dir / "colmap"
+        if not self.skip_colmap:
+            colmap_dir.mkdir(parents=True, exist_ok=True)
+
+            colmap_utils.run_colmap(
+                    image_dir=image_dir,
+                    mask_dir = mask_dir,
+                    colmap_dir=colmap_dir,
+                    camera_model=CAMERA_MODELS[self.camera_type],
+                    gpu=self.gpu,
+                    verbose=self.verbose,
+                    matching_method=self.matching_method,
+                    colmap_cmd=self.colmap_cmd,
+                )
+
+        # Save transforms.json
+        if (colmap_dir / "sparse" / "0" / "cameras.bin").exists():
+            with CONSOLE.status("[bold yellow]Saving results to transforms.json", spinner="balloon"):
+                num_matched_frames = colmap_utils.colmap_to_json(
+                    cameras_path=colmap_dir / "sparse" / "0" / "cameras.bin",
+                    images_path=colmap_dir / "sparse" / "0" / "images.bin",
+                    mask_dir=mask_dir,
+                    output_dir=self.output_dir,
+                    camera_model=CAMERA_MODELS[self.camera_type],
+                )
+                summary_log.append(f"Colmap matched {num_matched_frames} images")
+            summary_log.append(colmap_utils.get_matching_summary(num_frames, num_matched_frames))
+        else:
+            CONSOLE.log("[bold yellow]Warning: could not find existing COLMAP results. Not generating transforms.json")
+
+        CONSOLE.rule("[bold green]:tada: :tada: :tada: All DONE :tada: :tada: :tada:")
+
+        for summary in summary_log:
+            CONSOLE.print(summary, justify="center")
+        CONSOLE.rule()
 
 @dataclass
 class ProcessImages:
@@ -711,6 +819,7 @@ class ProcessMetashape:
 
 
 Commands = Union[
+    Annotated[ProcessDavis, tyro.conf.subcommand(name="davis")],
     Annotated[ProcessImages, tyro.conf.subcommand(name="images")],
     Annotated[ProcessVideo, tyro.conf.subcommand(name="video")],
     Annotated[ProcessPolycam, tyro.conf.subcommand(name="polycam")],

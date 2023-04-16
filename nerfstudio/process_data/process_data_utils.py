@@ -14,12 +14,14 @@
 
 """Helper utils for processing data into the nerfstudio format."""
 
+import os
 import shutil
 import sys
 from enum import Enum
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+import cv2 as cv
 from rich.console import Console
 from typing_extensions import Literal
 
@@ -167,9 +169,16 @@ def copy_images(data: Path, image_dir: Path, verbose) -> int:
         allowed_exts = [".jpg", ".jpeg", ".png", ".tif", ".tiff"]
         image_paths = sorted([p for p in data.glob("[!.]*") if p.suffix.lower() in allowed_exts])
 
-        num_frames = len(copy_images_list(image_paths, image_dir, verbose))
+        num_frames = len(copy_images_list(image_paths, image_dir, verbose=verbose))
 
     return num_frames
+
+def invert_mask(mask_dir: Path):
+    ls = mask_dir.glob('*.png')
+    for f1 in ls:
+        f2=f1.with_suffix('.jpg.png')
+        os.rename(f1,f2)
+        cv.imwrite(f2.as_posix(),255-cv.imread(f2.as_posix(),cv.IMREAD_GRAYSCALE))
 
 
 def downscale_images(image_dir: Path, num_downscales: int, verbose: bool = False) -> str:

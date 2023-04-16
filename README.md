@@ -9,6 +9,11 @@
 
 SDFStudio is a unified and modular framework for neural implicit surface reconstruction, built on top of the awesome nerfstudio project. We provide a unified implementation of three major implicit surface reconstruction methods: UniSurf, VolSDF, and NeuS. SDFStudio also supports various scene representions, such as MLPs, Tri-plane, and Multi-res. feature grids, and multiple point sampling strategies such as surface-guided sampling as in UniSurf, and Voxel-surface guided sampling from NeuralReconW. It further integrates recent advances in the area such as the utillization of monocular cues (MonoSDF), geometry regularization (UniSurf) and multi-view consistency (Geo-NeuS). Thanks to the unified and modular implementation, SDFStudio makes it easy to transfer ideas from one method to another. For example, Mono-NeuS applies the idea from MonoSDF to NeuS, and Geo-VolSDF applies the idea from Geo-NeuS to VolSDF.
 
+# Updates
+**2023.03.12**: Support [BakedSDF](https://bakedsdf.github.io/).
+
+**2022.12.28**: Support [Neural RGB-D Surface Reconstruction](https://dazinovic.github.io/neural-rgbd-surface-reconstruction/).
+
 # Quickstart
 
 ## 1. Installation: Setup the environment
@@ -99,7 +104,7 @@ ns-extract-mesh --load-config outputs/neus-facto-dtu65/neus-facto/XXX/config.yml
 ### Render Mesh
 
 ```
-ns-render-mesh --meshfile meshes/neus-facto-dtu65.ply --traj interpolate --data.data data/sdfstudio-demo-data/dtu-scan65 --output-path renders/neus-facto-dtu65.mp4
+ns-render-mesh --meshfile meshes/neus-facto-dtu65.ply --traj interpolate  --output-path renders/neus-facto-dtu65.mp4 sdfstudio-data --data data/sdfstudio-demo-data/dtu-scan65
 ```
 
 You will get the following video if everything works properly.

@@ -16,10 +16,10 @@
 Field for compound nerf model, adds scene contraction and image embeddings to instant ngp
 """
 
+import math
 from dataclasses import dataclass, field
 from typing import Optional, Type, Union
 
-import math
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -165,6 +165,8 @@ class SDFFieldConfig(FieldConfig):
     """whether to use n dot v as in ref-nerf"""
     rgb_padding: float = 0.001
     """Padding added to the RGB outputs"""
+    off_axis: bool = False
+    """whether to use off axis encoding from mipnerf360"""
 
 
 class SDFField(Field):
@@ -242,6 +244,7 @@ class SDFField(Field):
             min_freq_exp=0.0,
             max_freq_exp=self.config.position_encoding_max_degree - 1,
             include_input=False,
+            off_axis=self.config.off_axis,
         )
 
         self.direction_encoding = NeRFEncoding(
@@ -387,7 +390,7 @@ class SDFField(Field):
         if self.spatial_distortion is not None:
             x = self.spatial_distortion(x)
 
-        # compute gradient in constracted space
+        # compute gradient in contracted space
         x.requires_grad_(True)
 
         y = self.forward_geonetwork(x)[:, :1]
@@ -462,7 +465,7 @@ class SDFField(Field):
         occupancy = self.sigmoid(-10.0 * sdf)
         return occupancy
 
-    def get_colors(self, points, directions, normals, geo_features, camera_indices):
+    def get_colors(self, points, directions, gradients, geo_features, camera_indices):
         """compute colors"""
 
         # diffuse color and specular tint
@@ -471,11 +474,11 @@ class SDFField(Field):
         if self.config.use_specular_tint:
             tint = self.sigmoid(self.specular_tint_pred(geo_features.view(-1, self.config.geo_feat_dim)))
 
-        normals = F.normalize(normals, p=2, dim=-1)
+        normals = F.normalize(gradients, p=2, dim=-1)
 
         if self.config.use_reflections:
             # https://github.com/google-research/multinerf/blob/5d4c82831a9b94a87efada2eee6a993d530c4226/internal/ref_utils.py#L22
-            refdirs = 2.0 * torch.sum(normals * directions, axis=-1, keepdims=True) * normals - directions
+            refdirs = 2.0 * torch.sum(normals * -directions, axis=-1, keepdims=True) * normals + directions
             d = self.direction_encoding(refdirs)
         else:
             d = self.direction_encoding(directions)
@@ -505,7 +508,7 @@ class SDFField(Field):
             h = [
                 points,
                 d,
-                normals,
+                gradients,
                 geo_features.view(-1, self.config.geo_feat_dim),
                 embedded_appearance.view(-1, self.config.appearance_embedding_dim),
             ]
@@ -561,7 +564,7 @@ class SDFField(Field):
 
         if self.spatial_distortion is not None:
             inputs = self.spatial_distortion(inputs)
-
+        points_norm = inputs.norm(dim=-1)
         # compute gradient in constracted space
         inputs.requires_grad_(True)
         with torch.enable_grad():
@@ -580,7 +583,8 @@ class SDFField(Field):
         sdf = sdf.view(*ray_samples.frustums.directions.shape[:-1], -1)
         density = density.view(*ray_samples.frustums.directions.shape[:-1], -1)
         gradients = gradients.view(*ray_samples.frustums.directions.shape[:-1], -1)
-        normals = torch.nn.functional.normalize(gradients, p=2, dim=-1)
+        normals = F.normalize(gradients, p=2, dim=-1)
+        points_norm = points_norm.view(*ray_samples.frustums.directions.shape[:-1], -1)
 
         outputs.update(
             {
@@ -589,6 +593,7 @@ class SDFField(Field):
                 FieldHeadNames.SDF: sdf,
                 FieldHeadNames.NORMAL: normals,
                 FieldHeadNames.GRADIENT: gradients,
+                "points_norm": points_norm,
             }
         )
 
