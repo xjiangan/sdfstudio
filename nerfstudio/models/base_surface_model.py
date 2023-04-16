@@ -60,6 +60,7 @@ from nerfstudio.model_components.scene_colliders import (
     NearFarCollider,
     SphereCollider,
 )
+from nerfstudio.model_components.point_projectors import PointProjectors
 from nerfstudio.models.base_model import Model, ModelConfig
 from nerfstudio.utils import colormaps
 from nerfstudio.utils.colors import get_color
@@ -200,6 +201,7 @@ class SurfaceModel(Model):
         self.patch_warping = PatchWarping(
             patch_size=self.config.patch_size, valid_angle_thres=self.config.patch_warp_angle_thres
         )
+        self.project_points = PointProjectors()
 
         # losses
         self.rgb_loss = L1Loss()
@@ -274,7 +276,7 @@ class SurfaceModel(Model):
             depth_bg = self.renderer_depth(weights=weights_bg, ray_samples=ray_samples_bg)
             accumulation_bg = self.renderer_accumulation(weights=weights_bg)
 
-            # merge background color to forgound color
+            # merge background color to foreground color
             rgb = rgb + bg_transmittance * rgb_bg
 
             bg_outputs = {
@@ -294,7 +296,7 @@ class SurfaceModel(Model):
             "weights": weights,
             "ray_points": self.scene_contraction(
                 ray_samples.frustums.get_start_positions()
-            ),  # used for creating visiblity mask
+            ),  # used for creating visibility mask
             "directions_norm": ray_bundle.directions_norm,  # used to scale z_vals for free space and sdf loss
         }
         outputs.update(bg_outputs)
@@ -326,7 +328,7 @@ class SurfaceModel(Model):
         """run the model with additional inputs such as warping or rendering from unseen rays
         Args:
             ray_bundle: containing all the information needed to render that ray latents included
-            additional_inputs: addtional inputs such as images, src_idx, src_cameras
+            additional_inputs: additional inputs such as images, src_idx, src_cameras
 
         Returns:
             dict: information needed for compute gradients
@@ -351,6 +353,25 @@ class SurfaceModel(Model):
             )
 
             outputs.update({"patches": warped_patches, "patches_valid_mask": valid_mask})
+
+        return outputs
+
+    def get_outputs_our(self, ray_bundle: RayBundle, additional_inputs: Dict[str, TensorType]) -> Dict:
+        """run the model with additional inputs such as warping or rendering from unseen rays
+        Args:
+            ray_bundle: containing all the information needed to render that ray latents included
+            additional_inputs: additional inputs such as images, src_idx, src_cameras
+
+        Returns:
+            dict: information needed for compute gradients
+        """
+        if self.collider is not None:
+            ray_bundle = self.collider(ray_bundle)
+
+        outputs = self.get_outputs(ray_bundle)
+
+        src_pixels = additional_inputs["src_pixels"]
+        ref_pixels, _ = self.project_points(ray_bundle, outputs["depth"], additional_inputs)
 
         return outputs
 

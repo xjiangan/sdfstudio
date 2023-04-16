@@ -44,6 +44,8 @@ from nerfstudio.data.datamanagers.base_datamanager import (
     FlexibleDataManagerConfig,
     VanillaDataManager,
     VanillaDataManagerConfig,
+    OurDataManager,
+    OurDataManagerConfig,
 )
 from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes
 from nerfstudio.models.base_model import Model, ModelConfig
@@ -460,7 +462,6 @@ class FlexibleInputPipelineConfig(VanillaPipelineConfig):
     model: ModelConfig = ModelConfig()
     """specifies the model config"""
 
-
 class FlexibleInputPipeline(VanillaPipeline):
     @profiler.time_function
     def get_train_loss_dict(self, step: int):
@@ -489,3 +490,45 @@ class FlexibleInputPipeline(VanillaPipeline):
         loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
 
         return model_outputs, loss_dict, metrics_dict
+
+
+@dataclass
+class OurInputPipelineConfig(VanillaPipelineConfig):
+    """Configuration for pipeline instantiation"""
+
+    _target: Type = field(default_factory=lambda: OurInputPipeline)
+    """target class to instantiate"""
+    datamanager: OurDataManagerConfig = OurDataManagerConfig()
+    """specifies the datamanager config"""
+    model: ModelConfig = ModelConfig()
+    """specifies the model config"""
+
+class OurInputPipeline(VanillaPipeline):
+    @profiler.time_function
+    def get_train_loss_dict(self, step: int):
+        """This function gets your training loss dict. This will be responsible for
+        getting the next batch of data from the DataManager and interfacing with the
+        Model class, feeding the data to the model's forward function.
+
+        Args:
+            step: current iteration step to update sampler if using DDP (distributed)
+        """
+        ray_bundle, batch, additional_input = self.datamanager.next_train(step)
+        model_outputs = self.model.get_outputs_flexible(ray_bundle, additional_input)
+        # TODO: add additional_input to model get_metrics_dict or get_loss_dict?
+        metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
+
+        camera_opt_param_group = self.config.datamanager.camera_optimizer.param_group
+        if camera_opt_param_group in self.datamanager.get_param_groups():
+            # Report the camera optimization metrics
+            metrics_dict["camera_opt_translation"] = (
+                self.datamanager.get_param_groups()[camera_opt_param_group][0].data[:, :3].norm()
+            )
+            metrics_dict["camera_opt_rotation"] = (
+                self.datamanager.get_param_groups()[camera_opt_param_group][0].data[:, 3:].norm()
+            )
+
+        loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
+
+        return model_outputs, loss_dict, metrics_dict
+
