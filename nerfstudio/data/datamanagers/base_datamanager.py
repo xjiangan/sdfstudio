@@ -476,7 +476,6 @@ class FlexibleDataManagerConfig(VanillaDataManagerConfig):
     train_num_images_to_sample_from: int = 1
     """Number of images to sample during training iteration."""
 
-
 class FlexibleDataManager(VanillaDataManager):
     def next_train(self, step: int) -> Tuple[RayBundle, Dict]:
         """Returns the next batch of data from the train dataloader."""
@@ -493,6 +492,52 @@ class FlexibleDataManager(VanillaDataManager):
             additional_output["src_idxs"] = image_batch["src_idxs"][0]
             additional_output["src_imgs"] = image_batch["src_imgs"][0]
             additional_output["src_cameras"] = self.train_dataset._dataparser_outputs.cameras[
-                image_batch["src_idxs"][0]
+                image_batch["src_idxs"][0].to('cpu')
             ]
+        return ray_bundle, batch, additional_output
+
+
+
+@dataclass
+class OurDataManagerConfig(VanillaDataManagerConfig):
+    """Configuration for data manager instantiation; DataManager is in charge of keeping the train/eval dataparsers;
+    After instantiation, data manager holds both train/eval datasets and is in charge of returning unpacked
+    train/eval data at each iteration
+    """
+
+    _target: Type = field(default_factory=lambda: OurDataManager)
+    """Target class to instantiate."""
+    # train_num_images_to_sample_from: int = 1
+    # """Number of images to sample during training iteration."""
+
+class OurDataManager(VanillaDataManager):
+    def next_train(self, step: int) -> Tuple[RayBundle, Dict, Dict]:
+        """Returns the next batch of data from the train dataloader."""
+        self.train_count += 1
+        image_batch = next(self.iter_train_image_dataloader)
+        batch = self.train_pixel_sampler.sample(image_batch)
+        ray_indices = batch["indices"]
+        ray_bundle = self.train_ray_generator(ray_indices)
+
+
+        additional_output = {}
+
+        # indices of pixels on source cameras: (num_rays, 2)
+        additional_output["src_pixels"] = ray_bundle.coords[:, [1, 0]]
+
+        # indices of source cameras: (num_rays, )
+        src_indices = ray_bundle.camera_indices.to('cpu').squeeze()
+
+        # indices of source cameras whose reference cameras are not in training dataloader
+        mask_indices = ray_bundle.camera_indices.eq(ray_bundle.camera_indices.to('cpu').max())\
+            .long().to('cpu').squeeze().nonzero().squeeze()
+
+        # indices of reference cameras: (num_rays, )
+        ref_indices = src_indices + 1
+        ref_indices[mask_indices] = 0
+
+        additional_output["src_cameras"] = self.train_dataset.cameras[src_indices]
+        additional_output["ref_cameras"] = self.train_dataset.cameras[ref_indices]
+        additional_output["mask_indices"] = mask_indices
+
         return ray_bundle, batch, additional_output

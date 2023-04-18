@@ -693,6 +693,7 @@ class Cameras(TensorDataclass):
             camera_indices=camera_indices,
             directions_norm=directions_norm,
             times=times,
+            coords=coords,
         )
 
     def to_json(

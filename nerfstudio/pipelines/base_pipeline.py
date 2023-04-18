@@ -44,6 +44,8 @@ from nerfstudio.data.datamanagers.base_datamanager import (
     FlexibleDataManagerConfig,
     VanillaDataManager,
     VanillaDataManagerConfig,
+    OurDataManager,
+    OurDataManagerConfig,
 )
 from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes
 from nerfstudio.models.base_model import Model, ModelConfig
@@ -325,7 +327,6 @@ class VanillaPipeline(Pipeline):
         """
         self.eval()
         metrics_dict_list = []
-        images_dict_list = []
         num_images = len(self.datamanager.fixed_indices_eval_dataloader)
         with Progress(
             TextColumn("[progress.description]{task.description}"),
@@ -348,14 +349,13 @@ class VanillaPipeline(Pipeline):
                 height, width = camera_ray_bundle.shape
                 num_rays = height * width
                 outputs = self.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle)
-                metrics_dict, images_dict = self.model.get_image_metrics_and_images(outputs, batch)
+                metrics_dict, _ = self.model.get_image_metrics_and_images(outputs, batch)
                 assert "num_rays_per_sec" not in metrics_dict
                 metrics_dict["num_rays_per_sec"] = num_rays / (time() - inner_start)
                 fps_str = "fps"
                 assert fps_str not in metrics_dict
                 metrics_dict[fps_str] = metrics_dict["num_rays_per_sec"] / (height * width)
                 metrics_dict_list.append(metrics_dict)
-                images_dict_list.append(images_dict)
                 progress.advance(task)
         # average the metrics list
         metrics_dict = {}
@@ -364,15 +364,10 @@ class VanillaPipeline(Pipeline):
                 torch.mean(torch.tensor([metrics_dict[key] for metrics_dict in metrics_dict_list]))
             )
         self.train()
-        return metrics_dict, images_dict_list
+        return metrics_dict
 
     @profiler.time_function
-    def get_visibility_mask(
-        self,
-        coarse_grid_resolution: int = 512,
-        valid_points_thres: float = 0.005,
-        sub_sample_factor: int = 8,
-    ):
+    def get_visibility_mask(self):
         """Iterate over all the images in the eval dataset and get the average.
 
         Returns:
@@ -380,9 +375,7 @@ class VanillaPipeline(Pipeline):
         """
         self.eval()
 
-        coarse_mask = torch.ones(
-            (1, 1, coarse_grid_resolution, coarse_grid_resolution, coarse_grid_resolution), requires_grad=True
-        ).to(self.device)
+        coarse_mask = torch.ones((1, 1, 512, 512, 512), requires_grad=True).to(self.device)
         coarse_mask.retain_grad()
 
         num_images = len(self.datamanager.fixed_indices_train_dataloader)
@@ -403,13 +396,13 @@ class VanillaPipeline(Pipeline):
                     batch["image"] = batch["image"].images[0]
                     camera_ray_bundle = camera_ray_bundle.reshape((*batch["image"].shape[:-1],))
                 # downsample by factor of 4 to speed up
-                camera_ray_bundle = camera_ray_bundle[::sub_sample_factor, ::sub_sample_factor]
+                camera_ray_bundle = camera_ray_bundle[::4, ::4]
                 height, width = camera_ray_bundle.shape
                 outputs = self.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle)
                 ray_points = outputs["ray_points"].reshape(height, width, -1, 3)
                 weights = outputs["weights"]
 
-                valid_points = ray_points.reshape(-1, 3)[weights.reshape(-1) > valid_points_thres]
+                valid_points = ray_points.reshape(-1, 3)[weights.reshape(-1) > 0.005]
                 valid_points = valid_points * 0.5  # normalize from [-2, 2] to [-1, 1]
                 # update mask based on ray samples
                 with torch.enable_grad():
@@ -469,7 +462,6 @@ class FlexibleInputPipelineConfig(VanillaPipelineConfig):
     model: ModelConfig = ModelConfig()
     """specifies the model config"""
 
-
 class FlexibleInputPipeline(VanillaPipeline):
     @profiler.time_function
     def get_train_loss_dict(self, step: int):
@@ -498,3 +490,45 @@ class FlexibleInputPipeline(VanillaPipeline):
         loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
 
         return model_outputs, loss_dict, metrics_dict
+
+
+@dataclass
+class OurInputPipelineConfig(VanillaPipelineConfig):
+    """Configuration for pipeline instantiation"""
+
+    _target: Type = field(default_factory=lambda: OurInputPipeline)
+    """target class to instantiate"""
+    datamanager: OurDataManagerConfig = OurDataManagerConfig()
+    """specifies the datamanager config"""
+    model: ModelConfig = ModelConfig()
+    """specifies the model config"""
+
+class OurInputPipeline(VanillaPipeline):
+    @profiler.time_function
+    def get_train_loss_dict(self, step: int):
+        """This function gets your training loss dict. This will be responsible for
+        getting the next batch of data from the DataManager and interfacing with the
+        Model class, feeding the data to the model's forward function.
+
+        Args:
+            step: current iteration step to update sampler if using DDP (distributed)
+        """
+        ray_bundle, batch, additional_input = self.datamanager.next_train(step)
+        model_outputs = self.model.get_outputs_our(ray_bundle, additional_input)
+        # TODO: add additional_input to model get_metrics_dict or get_loss_dict?
+        metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
+
+        camera_opt_param_group = self.config.datamanager.camera_optimizer.param_group
+        if camera_opt_param_group in self.datamanager.get_param_groups():
+            # Report the camera optimization metrics
+            metrics_dict["camera_opt_translation"] = (
+                self.datamanager.get_param_groups()[camera_opt_param_group][0].data[:, :3].norm()
+            )
+            metrics_dict["camera_opt_rotation"] = (
+                self.datamanager.get_param_groups()[camera_opt_param_group][0].data[:, 3:].norm()
+            )
+
+        loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
+
+        return model_outputs, loss_dict, metrics_dict
+

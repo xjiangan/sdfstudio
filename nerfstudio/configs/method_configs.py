@@ -32,6 +32,7 @@ from nerfstudio.configs.base_config import (
 from nerfstudio.data.datamanagers.base_datamanager import (
     FlexibleDataManagerConfig,
     VanillaDataManagerConfig,
+    OurDataManagerConfig,
 )
 from nerfstudio.data.datamanagers.semantic_datamanager import SemanticDataManagerConfig
 from nerfstudio.data.datamanagers.variable_res_datamanager import (
@@ -41,6 +42,7 @@ from nerfstudio.data.dataparsers.blender_dataparser import BlenderDataParserConf
 from nerfstudio.data.dataparsers.dnerf_dataparser import DNeRFDataParserConfig
 from nerfstudio.data.dataparsers.friends_dataparser import FriendsDataParserConfig
 from nerfstudio.data.dataparsers.nerfstudio_dataparser import NerfstudioDataParserConfig
+from nerfstudio.data.dataparsers.our_dataparser import OurDataParserConfig
 from nerfstudio.data.dataparsers.phototourism_dataparser import (
     PhototourismDataParserConfig,
 )
@@ -67,9 +69,11 @@ from nerfstudio.models.tensorf import TensoRFModelConfig
 from nerfstudio.models.unisurf import UniSurfModelConfig
 from nerfstudio.models.vanilla_nerf import NeRFModel, VanillaModelConfig
 from nerfstudio.models.volsdf import VolSDFModelConfig
+from nerfstudio.models.our_nerf import OurNeRFModelConfig
 from nerfstudio.pipelines.base_pipeline import (
     FlexibleInputPipelineConfig,
     VanillaPipelineConfig,
+    OurInputPipelineConfig,
 )
 from nerfstudio.pipelines.dynamic_batch import DynamicBatchPipelineConfig
 
@@ -140,7 +144,6 @@ method_configs["bakedsdf"] = Config(
                 use_specular_tint=True,
                 use_reflections=True,
                 use_n_dot_v=True,
-                off_axis=True,
             ),
             eikonal_loss_mult=0.01,
             background_model="none",
@@ -203,14 +206,12 @@ method_configs["bakedsdf-mlp"] = Config(
                 use_specular_tint=True,
                 use_reflections=True,
                 use_n_dot_v=True,
-                off_axis=True,
             ),
             eikonal_loss_mult=0.01,
             background_model="none",
             use_anneal_beta=True,
             proposal_weights_anneal_max_num_iters=20000,
             eval_num_rays_per_chunk=1024,
-            use_spatial_varying_eikonal_loss=True,
         ),
     ),
     optimizers={
@@ -227,57 +228,6 @@ method_configs["bakedsdf-mlp"] = Config(
     vis="viewer",
 )
 
-method_configs["neus-factop"] = Config(
-    method_name="neus-facto",
-    trainer=TrainerConfig(
-        steps_per_eval_image=5000,
-        steps_per_eval_batch=5000,
-        steps_per_save=20000,
-        steps_per_eval_all_images=1000000,  # set to a very large model so we don't eval with all images
-        max_num_iterations=20001,
-        mixed_precision=False,
-    ),
-    pipeline=VanillaPipelineConfig(
-        datamanager=VanillaDataManagerConfig(
-            dataparser=SDFStudioDataParserConfig(),
-            train_num_rays_per_batch=2048,
-            eval_num_rays_per_batch=1024,
-            camera_optimizer=CameraOptimizerConfig(
-                mode="SO3xR3", optimizer=AdamOptimizerConfig(lr=6e-4, eps=1e-8, weight_decay=1e-2),
-                position_noise_std=0.3, orientation_noise_std=0.3
-            ),
-        ),
-        model=NeuSFactoModelConfig(
-            sdf_field=SDFFieldConfig(
-                use_grid_feature=True,
-                num_layers=2,
-                num_layers_color=2,
-                hidden_dim=256,
-                bias=0.5,
-                beta_init=0.3,
-                use_appearance_embedding=False,
-            ),
-            background_model="none",
-            eval_num_rays_per_chunk=1024,
-        ),
-    ),
-    optimizers={
-        "proposal_networks": {
-            "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
-            "scheduler": MultiStepSchedulerConfig(max_steps=20000),
-        },
-        "fields": {
-            "optimizer": AdamOptimizerConfig(lr=5e-4, eps=1e-15),
-            "scheduler": NeuSSchedulerConfig(warm_up_end=500, learning_rate_alpha=0.05, max_steps=20000),
-        },
-        "field_background": {
-            "optimizer": AdamOptimizerConfig(lr=5e-4, eps=1e-15),
-            "scheduler": NeuSSchedulerConfig(warm_up_end=500, learning_rate_alpha=0.05, max_steps=20000),
-        },
-    },
-    viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
-    vis="tensorboard",
-)
 
 method_configs["neus-facto"] = Config(
     method_name="neus-facto",
@@ -424,7 +374,10 @@ method_configs["monosdf"] = Config(
             train_num_rays_per_batch=1024,
             eval_num_rays_per_batch=1024,
             camera_optimizer=CameraOptimizerConfig(
-                mode="off", optimizer=AdamOptimizerConfig(lr=6e-4, eps=1e-8, weight_decay=1e-2)
+                mode="SO3xR3", # "off" "SO3xR3"
+                optimizer=AdamOptimizerConfig(lr=6e-4, eps=1e-8, weight_decay=1e-2),
+                position_noise_std=0.0,
+                orientation_noise_std=0.0,
             ),
         ),
         model=VolSDFModelConfig(mono_depth_loss_mult=0.1, mono_normal_loss_mult=0.05, eval_num_rays_per_chunk=1024),
@@ -799,37 +752,6 @@ method_configs["neus-acc"] = Config(
     vis="viewer",
 )
 
-
-method_configs["nerfacto"] = Config(
-    method_name="nerfacto",
-    trainer=TrainerConfig(
-        steps_per_eval_batch=5000, steps_per_save=2000, max_num_iterations=30000, mixed_precision=True
-    ),
-    pipeline=VanillaPipelineConfig(
-        datamanager=VanillaDataManagerConfig(
-            dataparser=NerfstudioDataParserConfig(),
-            train_num_rays_per_batch=4096,
-            eval_num_rays_per_batch=4096,
-            camera_optimizer=CameraOptimizerConfig(
-                mode="SO3xR3", optimizer=AdamOptimizerConfig(lr=6e-4, eps=1e-8, weight_decay=1e-2)
-            ),
-        ),
-        model=NerfactoModelConfig(eval_num_rays_per_chunk=1 << 15),
-    ),
-    optimizers={
-        "proposal_networks": {
-            "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
-            "scheduler": MultiStepSchedulerConfig(max_steps=300000),
-        },
-        "fields": {
-            "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
-            "scheduler": MultiStepSchedulerConfig(max_steps=300000),
-        },
-    },
-    viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
-    vis="viewer",
-)
-
 method_configs["instant-ngp"] = Config(
     method_name="instant-ngp",
     trainer=TrainerConfig(
@@ -899,26 +821,6 @@ method_configs["semantic-nerfw"] = Config(
     vis="viewer",
 )
 
-method_configs["vanilla-nerf"] = Config(
-    method_name="vanilla-nerf",
-    pipeline=VanillaPipelineConfig(
-        datamanager=VanillaDataManagerConfig(
-            dataparser=BlenderDataParserConfig(),
-        ),
-        model=VanillaModelConfig(_target=NeRFModel),
-    ),
-    optimizers={
-        "fields": {
-            "optimizer": RAdamOptimizerConfig(lr=5e-4, eps=1e-08),
-            "scheduler": None,
-        },
-        "temporal_distortion": {
-            "optimizer": RAdamOptimizerConfig(lr=5e-4, eps=1e-08),
-            "scheduler": None,
-        },
-    },
-)
-
 method_configs["tensorf"] = Config(
     method_name="tensorf",
     trainer=TrainerConfig(mixed_precision=False),
@@ -986,6 +888,230 @@ method_configs["phototourism"] = Config(
         "fields": {
             "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
             "scheduler": None,
+        },
+    },
+    viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
+    vis="viewer",
+)
+
+method_configs["nerfacto"] = Config(
+    method_name="nerfacto",
+    trainer=TrainerConfig(
+        steps_per_eval_batch=5000, steps_per_save=2000, max_num_iterations=30000, mixed_precision=True
+    ),
+    pipeline=VanillaPipelineConfig(
+        datamanager=VanillaDataManagerConfig(
+            dataparser=NerfstudioDataParserConfig(),
+            train_num_rays_per_batch=4096,
+            eval_num_rays_per_batch=4096,
+            camera_optimizer=CameraOptimizerConfig(
+                mode="SO3xR3", optimizer=AdamOptimizerConfig(lr=6e-4, eps=1e-8, weight_decay=1e-2)
+            ),
+        ),
+        model=NerfactoModelConfig(eval_num_rays_per_chunk=1 << 15),
+    ),
+    optimizers={
+        "proposal_networks": {
+            "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
+            "scheduler": MultiStepSchedulerConfig(max_steps=300000),
+        },
+        "fields": {
+            "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
+            "scheduler": MultiStepSchedulerConfig(max_steps=300000),
+        },
+    },
+    viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
+    vis="viewer",
+)
+
+method_configs["vanilla-nerf"] = Config(
+    method_name="vanilla-nerf",
+    pipeline=VanillaPipelineConfig(
+        datamanager=VanillaDataManagerConfig(
+            dataparser=BlenderDataParserConfig(),
+        ),
+        model=VanillaModelConfig(_target=NeRFModel),
+    ),
+    optimizers={
+        "fields": {
+            "optimizer": RAdamOptimizerConfig(lr=5e-4, eps=1e-08),
+            "scheduler": None,
+        },
+        "temporal_distortion": {
+            "optimizer": RAdamOptimizerConfig(lr=5e-4, eps=1e-08),
+            "scheduler": None,
+        },
+    },
+)
+
+# New
+method_configs["nerfmm"] = Config(
+    method_name="nerfmm",
+    trainer=TrainerConfig(
+        steps_per_save=5000,
+        steps_per_eval_image=5000,
+        steps_per_eval_batch=5000,
+        steps_per_eval_all_images=100000,
+        max_num_iterations=500000,
+    ),
+    pipeline=VanillaPipelineConfig(
+        datamanager=VanillaDataManagerConfig(
+            dataparser=BlenderDataParserConfig(),
+            camera_optimizer=CameraOptimizerConfig(
+                mode="SO3xR3",
+                optimizer=AdamOptimizerConfig(lr=6e-4, eps=1e-8, weight_decay=1e-2),
+                position_noise_std=0.0,
+                orientation_noise_std=0.0,
+            ),
+        ),
+        model=VanillaModelConfig(_target=NeRFModel),
+    ),
+    optimizers={
+        "fields": {
+            "optimizer": RAdamOptimizerConfig(lr=5e-4, eps=1e-08),
+            "scheduler": None,
+        },
+        "temporal_distortion": {
+            "optimizer": RAdamOptimizerConfig(lr=5e-4, eps=1e-08),
+            "scheduler": None,
+        },
+    },
+)
+
+method_configs["our-nerf"] = Config(
+    method_name="our-nerf",
+    trainer=TrainerConfig(
+        steps_per_eval_image=5000,
+        steps_per_eval_batch=5000,
+        steps_per_save=1000,
+        steps_per_eval_all_images=1000000,
+        max_num_iterations=100000,
+        mixed_precision=False,
+    ),
+    pipeline=VanillaPipelineConfig( # FlexibleInputPipelineConfig
+        datamanager=VanillaDataManagerConfig( # FlexibleDataManagerConfig
+            dataparser=NerfstudioDataParserConfig(),
+            train_num_rays_per_batch=1024,
+            eval_num_rays_per_batch=1024,
+            eval_num_images_to_sample_from=5,
+            eval_num_times_to_repeat_images=0,
+            camera_optimizer=CameraOptimizerConfig(
+                mode="off", # "SO3xR3"
+                optimizer=AdamOptimizerConfig(lr=6e-4, eps=1e-8, weight_decay=1e-2),
+                position_noise_std=0.0,
+                orientation_noise_std=0.0,
+            ),
+        ),
+        model=OurNeRFModelConfig(
+            mono_normal_loss_mult=0.01,
+            mono_depth_loss_mult=0.05,
+            patch_warp_loss_mult=0.1,
+            eval_num_rays_per_chunk=1024,
+        ),
+    ),
+    optimizers={
+        "fields": {
+            "optimizer": AdamOptimizerConfig(lr=5e-4, eps=1e-15),
+            "scheduler": ExponentialSchedulerConfig(decay_rate=0.1, max_steps=100000),
+        },
+        "field_background": {
+            "optimizer": AdamOptimizerConfig(lr=5e-4, eps=1e-15),
+            "scheduler": ExponentialSchedulerConfig(decay_rate=0.1, max_steps=200000),
+        },
+    },
+    viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
+    vis="viewer",
+)
+
+method_configs["our-flex-nerf"] = Config(
+    method_name="our-flex-nerf",
+    trainer=TrainerConfig(
+        steps_per_eval_image=5000,
+        steps_per_eval_batch=5000,
+        steps_per_save=1000,
+        steps_per_eval_all_images=1000000,
+        max_num_iterations=100000,
+        mixed_precision=False,
+    ),
+    pipeline=FlexibleInputPipelineConfig(
+        datamanager=FlexibleDataManagerConfig(
+            dataparser=SDFStudioDataParserConfig(
+                include_mono_prior=True,
+                include_foreground_mask=True,
+                include_sfm_points=True,
+                load_pairs=True,
+            ),
+            train_num_rays_per_batch=1024,
+            eval_num_rays_per_batch=1024,
+            eval_num_images_to_sample_from=5,
+            eval_num_times_to_repeat_images=0,
+            camera_optimizer=CameraOptimizerConfig(
+                mode="off", # "SO3xR3"
+                optimizer=AdamOptimizerConfig(lr=6e-4, eps=1e-8, weight_decay=1e-2),
+                position_noise_std=0.0,
+                orientation_noise_std=0.0,
+            ),
+        ),
+        model=OurNeRFModelConfig(
+            mono_normal_loss_mult=0.01,
+            mono_depth_loss_mult=0.05,
+            patch_warp_loss_mult=0.1,
+            eval_num_rays_per_chunk=1024,
+        ),
+    ),
+    optimizers={
+        "fields": {
+            "optimizer": AdamOptimizerConfig(lr=5e-4, eps=1e-15),
+            "scheduler": ExponentialSchedulerConfig(decay_rate=0.1, max_steps=100000),
+        },
+        "field_background": {
+            "optimizer": AdamOptimizerConfig(lr=5e-4, eps=1e-15),
+            "scheduler": ExponentialSchedulerConfig(decay_rate=0.1, max_steps=200000),
+        },
+    },
+    viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
+    vis="viewer",
+)
+
+method_configs["our-test-nerf"] = Config(
+    method_name="our-test-nerf",
+    trainer=TrainerConfig(
+        steps_per_eval_image=5000,
+        steps_per_eval_batch=5000,
+        steps_per_save=1000,
+        steps_per_eval_all_images=1000000,
+        max_num_iterations=100000,
+        mixed_precision=False,
+    ),
+    pipeline=OurInputPipelineConfig(
+        datamanager=OurDataManagerConfig(
+            dataparser=OurDataParserConfig(),
+            train_num_rays_per_batch=1024,
+            eval_num_rays_per_batch=1024,
+            eval_num_images_to_sample_from=5,
+            eval_num_times_to_repeat_images=0,
+            camera_optimizer=CameraOptimizerConfig(
+                mode="off", # "SO3xR3"
+                optimizer=AdamOptimizerConfig(lr=6e-4, eps=1e-8, weight_decay=1e-2),
+                position_noise_std=0.0,
+                orientation_noise_std=0.0,
+            ),
+        ),
+        model=OurNeRFModelConfig(
+            mono_normal_loss_mult=0.01,
+            mono_depth_loss_mult=0.05,
+            patch_warp_loss_mult=0.1,
+            eval_num_rays_per_chunk=1024,
+        ),
+    ),
+    optimizers={
+        "fields": {
+            "optimizer": AdamOptimizerConfig(lr=5e-4, eps=1e-15),
+            "scheduler": ExponentialSchedulerConfig(decay_rate=0.1, max_steps=100000),
+        },
+        "field_background": {
+            "optimizer": AdamOptimizerConfig(lr=5e-4, eps=1e-15),
+            "scheduler": ExponentialSchedulerConfig(decay_rate=0.1, max_steps=200000),
         },
     },
     viewer=ViewerConfig(num_rays_per_chunk=1 << 15),

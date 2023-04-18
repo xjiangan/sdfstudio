@@ -60,6 +60,7 @@ from nerfstudio.model_components.scene_colliders import (
     NearFarCollider,
     SphereCollider,
 )
+from nerfstudio.model_components.point_projectors import PointProjectors
 from nerfstudio.models.base_model import Model, ModelConfig
 from nerfstudio.utils import colormaps
 from nerfstudio.utils.colors import get_color
@@ -118,8 +119,8 @@ class SurfaceModelConfig(ModelConfig):
     """Total variational loss mutliplier"""
     overwrite_near_far_plane: bool = False
     """whether to use near and far collider from command line"""
-    scene_contraction_norm: Literal["inf", "l2"] = "inf"
-    """Which norm to use for the scene contraction."""
+    optical_flow_loss_mult = 0.1
+    """Optical flow loss multiplier."""
 
 
 class SurfaceModel(Model):
@@ -135,14 +136,7 @@ class SurfaceModel(Model):
         """Set the fields and modules."""
         super().populate_modules()
 
-        if self.config.scene_contraction_norm == "inf":
-            order = float("inf")
-        elif self.config.scene_contraction_norm == "l2":
-            order = None
-        else:
-            raise ValueError("Invalid scene contraction norm")
-
-        self.scene_contraction = SceneContraction(order=order)
+        self.scene_contraction = SceneContraction(order=float("inf"))
 
         # Can we also use contraction for sdf?
         # Fields
@@ -209,6 +203,7 @@ class SurfaceModel(Model):
         self.patch_warping = PatchWarping(
             patch_size=self.config.patch_size, valid_angle_thres=self.config.patch_warp_angle_thres
         )
+        self.project_points = PointProjectors()
 
         # losses
         self.rgb_loss = L1Loss()
@@ -218,6 +213,7 @@ class SurfaceModel(Model):
             patch_size=self.config.patch_size, topk=self.config.topk, min_patch_variance=self.config.min_patch_variance
         )
         self.sensor_depth_loss = SensorDepthLoss(truncation=self.config.sensor_depth_truncation)
+        self.optical_flow_loss = L1Loss()
 
         # metrics
         self.psnr = PeakSignalNoiseRatio(data_range=1.0)
@@ -283,7 +279,7 @@ class SurfaceModel(Model):
             depth_bg = self.renderer_depth(weights=weights_bg, ray_samples=ray_samples_bg)
             accumulation_bg = self.renderer_accumulation(weights=weights_bg)
 
-            # merge background color to forgound color
+            # merge background color to foreground color
             rgb = rgb + bg_transmittance * rgb_bg
 
             bg_outputs = {
@@ -303,15 +299,14 @@ class SurfaceModel(Model):
             "weights": weights,
             "ray_points": self.scene_contraction(
                 ray_samples.frustums.get_start_positions()
-            ),  # used for creating visiblity mask
+            ),  # used for creating visibility mask
             "directions_norm": ray_bundle.directions_norm,  # used to scale z_vals for free space and sdf loss
         }
         outputs.update(bg_outputs)
 
         if self.training:
             grad_points = field_outputs[FieldHeadNames.GRADIENT]
-            points_norm = field_outputs["points_norm"]
-            outputs.update({"eik_grad": grad_points, "points_norm": points_norm})
+            outputs.update({"eik_grad": grad_points})
 
             # TODO volsdf use different point set for eikonal loss
             # grad_points = self.field.gradient(eik_points)
@@ -336,7 +331,7 @@ class SurfaceModel(Model):
         """run the model with additional inputs such as warping or rendering from unseen rays
         Args:
             ray_bundle: containing all the information needed to render that ray latents included
-            additional_inputs: addtional inputs such as images, src_idx, src_cameras
+            additional_inputs: additional inputs such as images, src_idx, src_cameras
 
         Returns:
             dict: information needed for compute gradients
@@ -361,6 +356,28 @@ class SurfaceModel(Model):
             )
 
             outputs.update({"patches": warped_patches, "patches_valid_mask": valid_mask})
+
+        return outputs
+
+    def get_outputs_our(self, ray_bundle: RayBundle, additional_inputs: Dict[str, TensorType]) -> Dict:
+        """run the model with additional inputs such as warping or rendering from unseen rays
+        Args:
+            ray_bundle: containing all the information needed to render that ray latents included
+            additional_inputs: additional inputs such as images, src_idx, src_cameras
+
+        Returns:
+            dict: information needed for compute gradients
+        """
+        if self.collider is not None:
+            ray_bundle = self.collider(ray_bundle)
+
+        outputs = self.get_outputs(ray_bundle)
+
+        src_pixels = additional_inputs["src_pixels"]
+        ref_pixels, _ = self.project_points(ray_bundle, outputs["depth"], additional_inputs)
+        optical_flow = ref_pixels - src_pixels
+        optical_flow[additional_inputs["mask_indices"]] = 0
+        outputs["optical_flow"] = optical_flow
 
         return outputs
 
@@ -435,6 +452,11 @@ class SurfaceModel(Model):
             if self.config.periodic_tvl_mult > 0.0:
                 assert self.field.config.encoding_type == "periodic"
                 loss_dict["tvl_loss"] = self.field.encoding.get_total_variation_loss() * self.config.periodic_tvl_mult
+
+            # optical flow loss
+            if "optical_flow" in batch and self.config.optical_flow_loss_mult > 0.0:
+                loss_dict["patch_loss"] = self.optical_flow_loss(batch["optical_flow"], outputs["optical_flow"])
+
 
         return loss_dict
 
