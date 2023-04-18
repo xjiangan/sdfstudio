@@ -46,8 +46,12 @@
       "console": "integratedTerminal",
       // "stopOnEntry": true,
       "args": [
-
         "nerfacto", 
+        "nerfstudio-data",
+        "--orientation_method",
+        "none",
+        "--center_poses",
+        "False",
         "--data", 
         "data/davis/train"
       ]
