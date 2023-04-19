@@ -542,20 +542,21 @@ class OurDataManager(VanillaDataManager):
         self.depths_eval = DepthOmniData(frames, os.path.join(cache_folder, "depths"))
         self.optical_flows_eval = OpticalFlowRAFT(frames, os.path.join(cache_folder, "optical_flows"))
 
-    def next_train(self, step: int) -> Tuple[RayBundle, Dict, Dict]:
+    def next_train(self, step: int) -> Tuple[RayBundle, RayBundle, Dict, Dict]:
         """Returns the next batch of data from the train dataloader."""
         self.train_count += 1
         image_batch = next(self.iter_train_image_dataloader)
         batch = self.train_pixel_sampler.sample(image_batch)
-        ray_indices = batch["indices"]
-        ray_bundle = self.train_ray_generator(ray_indices)
-
+        src_ray_indices = batch["indices"]
+        src_ray_bundle = self.train_ray_generator(src_ray_indices)
         additional_output = {}
 
-        # indices of pixels on source cameras: (num_rays, 2)
-        additional_output["src_pixels"] = ray_bundle.coords[:, [1, 0]]
 
-        camera_indices = ray_bundle.camera_indices.to("cpu").squeeze().numpy()
+        ### Preparation for reprojection flow loss
+        # indices of pixels on source cameras: (num_rays, 2)
+        additional_output["src_pixels"] = src_ray_bundle.coords[:, [1, 0]]
+
+        camera_indices = src_ray_bundle.camera_indices.to("cpu").squeeze().numpy()
         camera_ids = np.unique(camera_indices)
         src_pixels_np = additional_output["src_pixels"].to("cpu").numpy()
         normals = np.empty((camera_indices.shape[0], 3))
@@ -572,24 +573,40 @@ class OurDataManager(VanillaDataManager):
                 )
 
         # indices of source cameras: (num_rays, )
-        src_indices = ray_bundle.camera_indices.to("cpu").squeeze()
+        src_camera_indices = src_ray_bundle.camera_indices.to('cpu').squeeze()
+        additional_output["src_cameras"] = self.train_dataset.cameras[src_camera_indices]
 
-        # indices of source cameras whose reference cameras are not in training dataloader
-        mask_indices = (
-            ray_bundle.camera_indices.eq(ray_bundle.camera_indices.to("cpu").max())
-            .long()
-            .to("cpu")
-            .squeeze()
-            .nonzero()
-            .squeeze()
-        )
+        # indices of rays whose reference cameras are not in training dataloader: (<num_rays, )
+        reprojection_mask_indices = src_ray_bundle.camera_indices.eq(src_ray_bundle.camera_indices.to('cpu').max())\
+            .long().to('cpu').squeeze().nonzero().squeeze()
+        additional_output["reprojection_mask_indices"] = reprojection_mask_indices
 
         # indices of reference cameras: (num_rays, )
-        ref_indices = src_indices + 1
-        ref_indices[mask_indices] = 0
+        ref_camera_indices = src_camera_indices + 1
+        ref_camera_indices[reprojection_mask_indices] = 0
+        additional_output["ref_cameras"] = self.train_dataset.cameras[ref_camera_indices]
 
-        additional_output["src_cameras"] = self.train_dataset.cameras[src_indices]
-        additional_output["ref_cameras"] = self.train_dataset.cameras[ref_indices]
-        additional_output["mask_indices"] = mask_indices
 
-        return ray_bundle, batch, additional_output
+        ### Preparation for disparity loss
+        # height and width of a frame: (1, )
+        image_height = additional_output["src_cameras"].image_height[0]
+        image_width = additional_output["src_cameras"].image_width[0]
+
+        # indices of rays for reference cameras: (num_rays, 3)
+        ref_ray_indices = torch.zeros(src_ray_indices.shape).long()
+        ref_ray_indices[:, 0] = ref_camera_indices  # camera indices
+        batch["optical_flow"] = torch.ones(additional_output["src_pixels"].shape) * 50
+        ref_ray_indices[:, 1] = src_ray_indices[:, 1] + batch["optical_flow"][:, 1]  # row indices
+        ref_ray_indices[:, 2] = src_ray_indices[:, 2] + batch["optical_flow"][:, 0]  # col indices
+
+        # indices of rays whose resultant pixels are out of the border: (<num_rays, )
+        mask_row = torch.logical_or(ref_ray_indices[:, 1] < 0, ref_ray_indices[:, 1] > image_height - 1)
+        mask_col = torch.logical_or(ref_ray_indices[:, 2] < 0, ref_ray_indices[:, 2] > image_width - 1)
+        disparity_mask_indices = torch.logical_or(mask_row, mask_col).long().to('cpu').squeeze().nonzero().squeeze()
+        ref_ray_indices[disparity_mask_indices] = 0
+        additional_output["disparity_mask_indices"] = disparity_mask_indices
+
+        # ray bundle generated from reference cameras
+        ref_ray_bundle = self.train_ray_generator(ref_ray_indices)
+
+        return src_ray_bundle, ref_ray_bundle, batch, additional_output
