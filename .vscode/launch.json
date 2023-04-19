@@ -47,6 +47,26 @@
       "args": ["instant_ngp"]
     },
     {
+      "name": "Python: davis nerfacto",
+      "type": "python",
+      "request": "launch",
+      "program": "scripts/train.py",
+      "console": "integratedTerminal",
+      // "stopOnEntry": true,
+      "args": [
+        "nerfacto", 
+        "nerfstudio-data",
+        "--auto_scale_poses",
+        "False",
+        "--orientation_method",
+        "none",
+        "--center_method",
+        "none",
+        "--data", 
+        "data/davis/train"
+      ]
+    },
+    {
       "name": "Python: train ngp nerfstudio",
       "type": "python",
       "request": "launch",
