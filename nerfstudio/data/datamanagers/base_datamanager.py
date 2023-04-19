@@ -18,10 +18,12 @@ Datamanager.
 
 from __future__ import annotations
 
+import os
 from abc import abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
+import numpy as np
 import torch
 import tyro
 from rich.progress import Console
@@ -35,6 +37,11 @@ from nerfstudio.cameras.camera_optimizers import CameraOptimizerConfig
 from nerfstudio.cameras.cameras import CameraType
 from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.configs.base_config import InstantiateConfig
+from nerfstudio.data.datamanagers.preprocessor.data_preprocessor import (
+    DepthOmniData,
+    NormalOmniData,
+    OpticalFlowRAFT,
+)
 from nerfstudio.data.dataparsers.blender_dataparser import BlenderDataParserConfig
 from nerfstudio.data.dataparsers.dnerf_dataparser import DNeRFDataParserConfig
 from nerfstudio.data.dataparsers.friends_dataparser import FriendsDataParserConfig
@@ -62,6 +69,7 @@ from nerfstudio.data.utils.nerfstudio_collate import nerfstudio_collate
 from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes
 from nerfstudio.model_components.ray_generators import RayGenerator
 from nerfstudio.utils.images import BasicImages
+from nerfstudio.utils.io import load_from_json
 from nerfstudio.utils.misc import IterableWrapper
 
 CONSOLE = Console(width=120)
@@ -476,6 +484,7 @@ class FlexibleDataManagerConfig(VanillaDataManagerConfig):
     train_num_images_to_sample_from: int = 1
     """Number of images to sample during training iteration."""
 
+
 class FlexibleDataManager(VanillaDataManager):
     def next_train(self, step: int) -> Tuple[RayBundle, Dict]:
         """Returns the next batch of data from the train dataloader."""
@@ -492,10 +501,9 @@ class FlexibleDataManager(VanillaDataManager):
             additional_output["src_idxs"] = image_batch["src_idxs"][0]
             additional_output["src_imgs"] = image_batch["src_imgs"][0]
             additional_output["src_cameras"] = self.train_dataset._dataparser_outputs.cameras[
-                image_batch["src_idxs"][0].to('cpu')
+                image_batch["src_idxs"][0].to("cpu")
             ]
         return ray_bundle, batch, additional_output
-
 
 
 @dataclass
@@ -510,7 +518,30 @@ class OurDataManagerConfig(VanillaDataManagerConfig):
     # train_num_images_to_sample_from: int = 1
     # """Number of images to sample during training iteration."""
 
+
 class OurDataManager(VanillaDataManager):
+    def setup_train(self):
+        super().setup_train()
+        print("Preprocessing training data...")
+        frames = torch.permute(
+            torch.stack([self.train_dataset.get_image(i) for i in range(len(self.train_dataset))]), (0, 3, 1, 2)
+        )
+        cache_folder = os.path.join(self.dataparser.config.data.absolute(), "train_cache")
+        self.normals_train = NormalOmniData(frames, os.path.join(cache_folder, "normals"))
+        self.depths_train = DepthOmniData(frames, os.path.join(cache_folder, "depths"))
+        self.optical_flows_train = OpticalFlowRAFT(frames, os.path.join(cache_folder, "optical_flows"))
+
+    def setup_eval(self):
+        super().setup_eval()
+        print("Preprocessing evaluation data...")
+        frames = torch.permute(
+            torch.stack([self.eval_dataset.get_image(i) for i in range(len(self.eval_dataset))]), (0, 3, 1, 2)
+        )
+        cache_folder = os.path.join(self.dataparser.config.data.absolute(), "eval_cache")
+        self.normals_eval = NormalOmniData(frames, os.path.join(cache_folder, "normals"))
+        self.depths_eval = DepthOmniData(frames, os.path.join(cache_folder, "depths"))
+        self.optical_flows_eval = OpticalFlowRAFT(frames, os.path.join(cache_folder, "optical_flows"))
+
     def next_train(self, step: int) -> Tuple[RayBundle, Dict, Dict]:
         """Returns the next batch of data from the train dataloader."""
         self.train_count += 1
@@ -519,18 +550,39 @@ class OurDataManager(VanillaDataManager):
         ray_indices = batch["indices"]
         ray_bundle = self.train_ray_generator(ray_indices)
 
-
         additional_output = {}
 
         # indices of pixels on source cameras: (num_rays, 2)
         additional_output["src_pixels"] = ray_bundle.coords[:, [1, 0]]
 
+        camera_indices = ray_bundle.camera_indices.to("cpu").squeeze().numpy()
+        camera_ids = np.unique(camera_indices)
+        src_pixels_np = additional_output["src_pixels"].to("cpu").numpy()
+        normals = np.empty((camera_indices.shape[0], 3))
+        depths = np.empty((camera_indices.shape[0]))
+        optical_flows = np.empty((camera_indices.shape[0], 2))
+        for c in camera_ids:
+            curr_entries = np.where(camera_indices == c)
+            curr_src_pixels = src_pixels_np[curr_entries]
+            normals[curr_entries] = self.normals_train.at(c, curr_src_pixels[:, 0], curr_src_pixels[:, 1])
+            depths[curr_entries] = self.depths_train.at(c, curr_src_pixels[:, 0], curr_src_pixels[:, 1])
+            if c < camera_ids.max():
+                optical_flows[curr_entries] = self.optical_flows_train.at(
+                    c, curr_src_pixels[:, 0], curr_src_pixels[:, 1]
+                )
+
         # indices of source cameras: (num_rays, )
-        src_indices = ray_bundle.camera_indices.to('cpu').squeeze()
+        src_indices = ray_bundle.camera_indices.to("cpu").squeeze()
 
         # indices of source cameras whose reference cameras are not in training dataloader
-        mask_indices = ray_bundle.camera_indices.eq(ray_bundle.camera_indices.to('cpu').max())\
-            .long().to('cpu').squeeze().nonzero().squeeze()
+        mask_indices = (
+            ray_bundle.camera_indices.eq(ray_bundle.camera_indices.to("cpu").max())
+            .long()
+            .to("cpu")
+            .squeeze()
+            .nonzero()
+            .squeeze()
+        )
 
         # indices of reference cameras: (num_rays, )
         ref_indices = src_indices + 1
