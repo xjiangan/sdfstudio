@@ -513,8 +513,8 @@ class OurInputPipeline(VanillaPipeline):
         Args:
             step: current iteration step to update sampler if using DDP (distributed)
         """
-        ray_bundle, batch, additional_input = self.datamanager.next_train(step)
-        model_outputs = self.model.get_outputs_our(ray_bundle, additional_input)
+        src_ray_bundle, ref_ray_bundle, batch, additional_input = self.datamanager.next_train(step)
+        model_outputs = self.model.get_outputs_our(src_ray_bundle, ref_ray_bundle, additional_input)
         # TODO: add additional_input to model get_metrics_dict or get_loss_dict?
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
 

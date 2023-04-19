@@ -1,4 +1,5 @@
 import os
+import pickle
 import sys
 from itertools import product
 from os import path
@@ -7,8 +8,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torchvision.transforms.functional as F
-from omnidata.omnidata_tools.torch.data.transforms import get_transform
-from omnidata.omnidata_tools.torch.modules.midas.dpt_depth import DPTDepthModel
 
 # from pips import saverloader
 # from pips.nets.pips import Pips
@@ -18,37 +17,56 @@ from torchvision.io import read_image, read_video
 from torchvision.models.optical_flow import Raft_Large_Weights, raft_large
 from tqdm import tqdm, trange
 
+from nerfstudio.data.datamanagers.preprocessor.omnidata.omnidata_tools.torch.modules.midas.dpt_depth import (
+    DPTDepthModel,
+)
+
 # sys.path.append(path.join(path.dirname(__file__), "pips"))
 
 
 class DataPreprocessorBase:
-    def __init__(self, video_folder_path: str, f_name):
-        self.base_folder = video_folder_path
-        self.cache_folder = path.join(video_folder_path, self.__class__.__name__)
-        if (
-            not path.exists(self.cache_folder)
-            or len([f for f in os.listdir(self.cache_folder) if f.endswith(".npy")]) == 0
-        ):
+    def __init__(self, frames, cache_folder=None):
+        # self.base_folder = video_folder_path
+        # self.cache_folder = path.join(video_folder_path, self.__class__.__name__)
+        # if (
+        #     not path.exists(self.cache_folder)
+        #     or len([f for f in os.listdir(self.cache_folder) if f.endswith(".npy")]) == 0
+        # ):
+        #     if not path.exists(self.cache_folder):
+        #         os.mkdir(self.cache_folder)
+        #     if isinstance(f_name, (str, bytes)):
+        #         frames = self.get_frames_vid(f_name)
+        #     else:
+        #         frames = self.get_frames_img(f_name)
+        #     self.init_meta(frames)
+        #     self.data = self.preprocess(frames)
+        #     np.save(path.join(self.cache_folder, "data.npy"), self.data)
+        # else:
+        #     self.load_meta()
+        #     self.data = np.load(path.join(self.cache_folder, "data.npy"))
+        self.data = None
+        if cache_folder is not None:
+            self.cache_folder = cache_folder
             if not path.exists(self.cache_folder):
-                os.mkdir(self.cache_folder)
-            if isinstance(f_name, (str, bytes)):
-                frames = self.get_frames_vid(f_name)
-            else:
-                frames = self.get_frames_img(f_name)
+                os.makedirs(self.cache_folder)
+            if path.exists(path.join(self.cache_folder, "data.npy")):
+                self.data = np.load(path.join(self.cache_folder, "data.npy"))
+                self.load_meta()
+
+        if self.data is None:
+            self.data = self.preprocess(frames)
             self.init_meta(frames)
-            self.preprocess(frames)
-        else:
-            self.load_meta()
+            np.save(path.join(self.cache_folder, "data.npy"), self.data)
 
-    def get_frames_vid(self, f_name):
-        frames, _, _ = read_video(path.join(self.base_folder, f_name), output_format="TCHW")
-        return frames
+    # def get_frames_vid(self, f_name):
+    #     frames, _, _ = read_video(path.join(self.base_folder, f_name), output_format="TCHW")
+    #     return frames
 
-    def get_frames_img(self, f_name_generator):
-        frames = []
-        for f_name in f_name_generator:
-            frames.append(read_image(path.join(self.base_folder, f_name)))
-        return torch.stack(frames)
+    # def get_frames_img(self, f_name_generator):
+    #     frames = []
+    #     for f_name in f_name_generator:
+    #         frames.append(read_image(path.join(self.base_folder, f_name)))
+    #     return torch.stack(frames)
 
     def init_meta(self, frames):
         raise RuntimeError("This is an abstract class!!")
@@ -70,82 +88,81 @@ class DataPreprocessorBase:
 
 
 class OpticalFlowRAFT(DataPreprocessorBase):
-    def __init__(self, video_folder_path: str, f_name="video.mp4", batch_sz=4):
-        self.batch_sz = batch_sz
-        self.model_input_H = 520
-        self.model_input_W = 960
-        super().__init__(video_folder_path, f_name)
-        self.flows = self.load_cached()
-        tmp = np.linspace(0, self.img_h, self.model_input_H + 1)
-        self.ys = (tmp[1:] + tmp[:-1]) / 2
-        tmp = np.linspace(0, self.img_w, self.model_input_W + 1)
-        self.xs = (tmp[1:] + tmp[:-1]) / 2
-
-    def load_cached(self):
-        self.n_frames = len([f for f in os.listdir(self.cache_folder) if f.endswith(".npy")])
-        return np.stack([np.load(path.join(self.cache_folder, f"{i}.npy")) for i in range(self.n_frames)])
+    batch_sz = 4
+    model_input_H = 520
+    model_input_W = 960
 
     def preprocess(self, frames):
-        print("No cached results found, computing optical flow...")
+        print("Computing optical flow...")
         weights = Raft_Large_Weights.DEFAULT
-        transforms = weights.transforms()
+        _transforms = weights.transforms()
         model = raft_large(weights=Raft_Large_Weights.DEFAULT, progress=False).to("cuda")
         model = model.eval()
-
-        for batch_start in trange(0, self.n_frames - 1, self.batch_sz):
-            batch_end = min(self.n_frames - 1, batch_start + self.batch_sz)
+        results = []
+        for batch_start in trange(0, frames.shape[0] - 1, self.batch_sz):
+            batch_end = min(frames.shape[0] - 1, batch_start + self.batch_sz)
             batch1 = frames[batch_start:batch_end]
             batch2 = frames[batch_start + 1 : batch_end + 1]
             batch1 = F.resize(batch1, size=[self.model_input_H, self.model_input_W], antialias=False)
             batch2 = F.resize(batch2, size=[self.model_input_H, self.model_input_W], antialias=False)
-            batch1, batch2 = transforms(batch1, batch2)
+            batch1, batch2 = _transforms(batch1, batch2)
             batch1 = batch1.to("cuda")
             batch2 = batch2.to("cuda")
             with torch.no_grad():
                 flows = model(batch1, batch2)[-1].cpu().numpy()
             flows = np.transpose(flows, [0, 2, 3, 1])
-            for ii, f in enumerate(flows):
-                np.save(path.join(self.cache_folder, f"{ii + batch_start}.npy"), f)
+            results.append(flows)
+        results = np.concatenate(results, axis=0)
+        img_h, img_w = frames.shape[2:]
+        results *= np.array([img_w / self.model_input_W, img_h / self.model_input_H])[None, None, None, :]
+        return results
 
     def init_meta(self, frames):
         self.n_frames, _, self.img_h, self.img_w = frames.shape
-        np.savetxt(
-            path.join(self.cache_folder, "meta.txt"), np.asarray([self.n_frames, self.img_h, self.img_w]), fmt="%d"
-        )
+        tmp = np.linspace(0, self.img_h, self.model_input_H + 1)
+        self.ys = (tmp[1:] + tmp[:-1]) / 2
+        tmp = np.linspace(0, self.img_w, self.model_input_W + 1)
+        self.xs = (tmp[1:] + tmp[:-1]) / 2
+        self.flows = self.data
+        meta_data = {"n_frames": self.n_frames, "ys": self.ys, "xs": self.xs}
+        pickle.dump(meta_data, open(path.join(self.cache_folder, "meta.pkl"), "wb"))
 
     def load_meta(self):
-        self.n_frames, self.img_h, self.img_w = np.loadtxt(path.join(self.cache_folder, "meta.txt")).astype(int)
+        self.flows = self.data
+        meta_data = pickle.load(open(path.join(self.cache_folder, "meta.pkl"), "rb"))
+        self.n_frames = meta_data["n_frames"]
+        self.ys = meta_data["ys"]
+        self.xs = meta_data["xs"]
 
     def at(self, frame_number, loc_x, loc_y):
         assert 0 <= frame_number < self.n_frames
         flow = self.flows[frame_number]
         results = RegularGridInterpolator((self.ys, self.xs), flow, bounds_error=False, fill_value=0)((loc_y, loc_x))
-        results *= np.array([self.img_w / self.model_input_W, self.img_h / self.model_input_H])[None, :]
+        # results *= np.array([self.img_w / self.model_input_W, self.img_h / self.model_input_H])[None, :]
         return results
 
 
 class NormalOmniData(DataPreprocessorBase):
-    def __init__(self, video_folder_path: str, f_name):
-        self.model_input_sz = 384
-        super().__init__(video_folder_path, f_name)
-        self.normals = self.load_cached()
+    model_input_sz = 384
+
+    def init_meta(self, frames):
+        self.n_frames, _, self.img_h, self.img_w = frames.shape
+        self.normals = self.data
         self.model_input_W = self.normals.shape[2]
         self.model_input_H = self.normals.shape[1]
         tmp = np.linspace(0, self.img_h, self.model_input_H + 1)
         self.ys = (tmp[1:] + tmp[:-1]) / 2
         tmp = np.linspace(0, self.img_w, self.model_input_W + 1)
         self.xs = (tmp[1:] + tmp[:-1]) / 2
-
-    def load_cached(self):
-        self.n_frames = len([f for f in os.listdir(self.cache_folder) if f.endswith(".npy")])
-        return np.stack([np.load(path.join(self.cache_folder, f"{i}.npy")) for i in range(self.n_frames)])
-
-    def init_meta(self, frames):
-        self.n_frames, _, self.img_h, self.img_w = frames.shape
-        np.savetxt(path.join(self.cache_folder, "meta.txt"), np.asarray([self.n_frames, self.img_h, self.img_w]))
+        meta_data = {"n_frames": self.n_frames, "ys": self.ys, "xs": self.xs}
+        pickle.dump(meta_data, open(path.join(self.cache_folder, "meta.pkl"), "wb"))
 
     def load_meta(self):
-        self.n_frames, self.img_h, self.img_w = np.loadtxt(path.join(self.cache_folder, "meta.txt")).astype(int)
+        self.normals = self.data
+        meta_data = pickle.load(open(path.join(self.cache_folder, "meta.pkl"), "rb"))
+        self.n_frames = meta_data["n_frames"]
+        self.ys = meta_data["ys"]
+        self.xs = meta_data["xs"]
 
     def align_and_concat(self, frame_left, frame_right, true_width):
         overlapped_region_width = self.model_input_sz * 2 - true_width
@@ -159,7 +176,7 @@ class NormalOmniData(DataPreprocessorBase):
         return result / norms[None, :, :]
 
     def preprocess(self, frames):
-        print("No cached results found, computing normals...")
+        print("Computing normals...")
         model_path = path.join(path.dirname(__file__), "models/omnidata/omnidata_dpt_normal_v2.ckpt")
         model = DPTDepthModel(backbone="vitb_rn50_384", num_channels=3)
         checkpoint = torch.load(model_path, map_location=lambda storage, _: storage.cuda())
@@ -189,13 +206,15 @@ class NormalOmniData(DataPreprocessorBase):
             ]
         )
 
+        results = []
         for i in trange(len(frames)):
             frame = frames[i]
             with torch.no_grad():
                 img_tensors = trans_totensor(frame).to("cuda")
                 model_output = model(img_tensors).clamp(0, 1).cpu().numpy()
             final_output = self.align_and_concat(model_output[0], model_output[1], model_img_sz[1]).transpose(1, 2, 0)
-            np.save(path.join(self.cache_folder, f"{i}.npy"), final_output)
+            results.append(final_output)
+        return np.stack(results, axis=0)
 
     def at(self, frame_number, loc_x, loc_y):
         assert 0 <= frame_number < self.n_frames
@@ -205,27 +224,26 @@ class NormalOmniData(DataPreprocessorBase):
 
 
 class DepthOmniData(DataPreprocessorBase):
-    def __init__(self, video_folder_path: str, f_name):
-        self.model_input_sz = 384
-        super().__init__(video_folder_path, f_name)
-        self.depths = self.load_cached()
+    model_input_sz = 384
+
+    def init_meta(self, frames):
+        self.n_frames, _, self.img_h, self.img_w = frames.shape
+        self.depths = self.data
         self.model_input_W = self.depths.shape[2]
         self.model_input_H = self.depths.shape[1]
         tmp = np.linspace(0, self.img_h, self.model_input_H + 1)
         self.ys = (tmp[1:] + tmp[:-1]) / 2
         tmp = np.linspace(0, self.img_w, self.model_input_W + 1)
         self.xs = (tmp[1:] + tmp[:-1]) / 2
-
-    def load_cached(self):
-        self.n_frames = len([f for f in os.listdir(self.cache_folder) if f.endswith(".npy")])
-        return np.stack([np.load(path.join(self.cache_folder, f"{i}.npy")) for i in range(self.n_frames)])
-
-    def init_meta(self, frames):
-        self.n_frames, _, self.img_h, self.img_w = frames.shape
-        np.savetxt(path.join(self.cache_folder, "meta.txt"), np.asarray([self.n_frames, self.img_h, self.img_w]))
+        meta_data = {"n_frames": self.n_frames, "ys": self.ys, "xs": self.xs}
+        pickle.dump(meta_data, open(path.join(self.cache_folder, "meta.pkl"), "wb"))
 
     def load_meta(self):
-        self.n_frames, self.img_h, self.img_w = np.loadtxt(path.join(self.cache_folder, "meta.txt")).astype(int)
+        self.depths = self.data
+        meta_data = pickle.load(open(path.join(self.cache_folder, "meta.pkl"), "rb"))
+        self.n_frames = meta_data["n_frames"]
+        self.ys = meta_data["ys"]
+        self.xs = meta_data["xs"]
 
     def align_and_concat(self, frame_left, frame_right, true_width):
         overlapped_region_width = self.model_input_sz * 2 - true_width
@@ -254,7 +272,7 @@ class DepthOmniData(DataPreprocessorBase):
         return result
 
     def preprocess(self, frames):
-        print("No cached results found, computing depths...")
+        print("Computing depths...")
         model_path = path.join(path.dirname(__file__), "models/omnidata/omnidata_dpt_depth_v2.ckpt")
         model = DPTDepthModel(backbone="vitb_rn50_384")
         checkpoint = torch.load(model_path, map_location=lambda storage, _: storage.cuda())
@@ -284,14 +302,17 @@ class DepthOmniData(DataPreprocessorBase):
                 transforms.Normalize(mean=0.5, std=0.5),
             ]
         )
-
+        results = []
         for i in trange(len(frames)):
             frame = frames[i]
             with torch.no_grad():
                 img_tensors = trans_totensor(frame).to("cuda")
                 model_output = 1 - model(img_tensors).clamp(min=0.0, max=1.0).cpu().numpy()
             final_output = self.align_and_concat(model_output[0], model_output[1], model_img_sz[1])
-            np.save(path.join(self.cache_folder, f"{i}.npy"), final_output)
+            # plt.imshow(final_output)
+            # plt.show()
+            results.append(final_output)
+        return np.stack(results, axis=0)
 
     def at(self, frame_number, loc_x, loc_y):
         assert 0 <= frame_number < self.n_frames
@@ -364,6 +385,6 @@ class DepthOmniData(DataPreprocessorBase):
 #                 np.save(path.join(self.cache_folder, f"{i}.npy"), result)
 
 
-if __name__ == "__main__":
-    optical_flow = NormalOmniData("preprocessor\\test\\blackswan", (f"{i:05d}.jpg" for i in range(50)))
-    print(optical_flow.at(10, [0, 10, 100], [0, 10, 100]))
+# if __name__ == "__main__":
+#     optical_flow = DepthOmniData("preprocessor\\test\\blackswan", (f"{i:05d}.jpg" for i in range(50)))
+#     print(optical_flow.at(10, [0, 10, 100], [0, 10, 100]))

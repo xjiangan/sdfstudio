@@ -359,25 +359,34 @@ class SurfaceModel(Model):
 
         return outputs
 
-    def get_outputs_our(self, ray_bundle: RayBundle, additional_inputs: Dict[str, TensorType]) -> Dict:
-        """run the model with additional inputs such as warping or rendering from unseen rays
-        Args:
-            ray_bundle: containing all the information needed to render that ray latents included
-            additional_inputs: additional inputs such as images, src_idx, src_cameras
+    def get_outputs_our(self,
+                        src_ray_bundle: RayBundle,
+                        ref_ray_bundle: RayBundle,
+                        additional_inputs: Dict[str, TensorType]) -> Dict:
 
-        Returns:
-            dict: information needed for compute gradients
-        """
         if self.collider is not None:
-            ray_bundle = self.collider(ray_bundle)
+            src_ray_bundle = self.collider(src_ray_bundle)
+            ref_ray_bundle = self.collider(ref_ray_bundle)
 
-        outputs = self.get_outputs(ray_bundle)
+        outputs = self.get_outputs(src_ray_bundle)
 
-        src_pixels = additional_inputs["src_pixels"]
-        ref_pixels, _ = self.project_points(ray_bundle, outputs["depth"], additional_inputs)
-        optical_flow = ref_pixels - src_pixels
-        optical_flow[additional_inputs["mask_indices"]] = 0
-        outputs["optical_flow"] = optical_flow
+        ### Calculate reprojection flow
+        src_world_positions = src_ray_bundle.origins + src_ray_bundle.directions * outputs["depth"]
+        reprojected_pixels, reprojected_z = self.project_points(src_world_positions, additional_inputs["ref_cameras"])
+        reprojection_flow = reprojected_pixels - additional_inputs["src_pixels"]
+        # reprojection_flow[additional_inputs["reprojection_mask_indices"]] = 0
+        outputs["reprojection_flow"] = reprojection_flow
+
+        ### Calculate z values
+        samples_and_field_outputs = self.sample_and_forward_field(ray_bundle=ref_ray_bundle)
+        ray_samples = samples_and_field_outputs["ray_samples"]
+        weights = samples_and_field_outputs["weights"]
+        ref_depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
+        ref_depth = ref_depth / ref_ray_bundle.directions_norm
+        ref_world_positions = ref_ray_bundle.origins + ref_ray_bundle.directions * ref_depth
+        _, ref_z = self.project_points(ref_world_positions, additional_inputs["ref_cameras"])
+        outputs["reprojected_z"] = reprojected_z
+        outputs["ref_z"] = ref_z
 
         return outputs
 
@@ -454,8 +463,8 @@ class SurfaceModel(Model):
                 loss_dict["tvl_loss"] = self.field.encoding.get_total_variation_loss() * self.config.periodic_tvl_mult
 
             # optical flow loss
-            if "optical_flow" in batch and self.config.optical_flow_loss_mult > 0.0:
-                loss_dict["patch_loss"] = self.optical_flow_loss(batch["optical_flow"], outputs["optical_flow"])
+            # if "optical_flow" in batch and self.config.optical_flow_loss_mult > 0.0:
+            #     loss_dict["optical_flow_loss"] = self.optical_flow_loss(batch["optical_flow"], outputs["reprojection_flow"])
 
 
         return loss_dict

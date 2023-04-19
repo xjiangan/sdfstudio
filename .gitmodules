@@ -5,10 +5,10 @@
 	path = preprocessor/manydepth
 	url = https://github.com/nianticlabs/manydepth.git
 [submodule "preprocessor/omnidata"]
-	path = preprocessor/omnidata
+	path = nerfstudio/data/datamanagers/preprocessor/omnidata
 	url = https://github.com/EPFL-VILAB/omnidata.git
 [submodule "preprocessor/models/omnidata"]
-	path = preprocessor/models/omnidata
+	path = nerfstudio/data/datamanagers/preprocessor/models/omnidata
 	url = https://huggingface.co/Yanksi/omnidata
 [submodule "preprocessor/models/pips"]
 	path = preprocessor/models/pips
