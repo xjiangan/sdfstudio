@@ -64,7 +64,7 @@ class PixelSampler:  # pylint: disable=too-few-public-methods
         if isinstance(mask, torch.Tensor):
             nonzero_indices = torch.nonzero(mask[..., 0], as_tuple=False)
             chosen_indices = random.sample(range(len(nonzero_indices)), k=batch_size)
-            indices = nonzero_indices[chosen_indices]
+            indices = nonzero_indices[chosen_indices].to(device).reshape(-1,3)
         else:
             indices = torch.floor(
                 torch.rand((batch_size, 3), device=device)
