@@ -13,7 +13,7 @@ class PointProjectors(nn.Module):
 
     def forward(self,
                 world_positions: TensorType[..., 3],
-                cameras: Cameras) -> Tuple[TensorType[..., 2], TensorType[..., 3]]:
+                cameras: Cameras) -> Tuple[TensorType[..., 2], TensorType[..., 1]]:
 
         # World space -> Reference cameras space
         cameras = cameras.to("cuda:0")

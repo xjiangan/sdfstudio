@@ -374,7 +374,7 @@ class SurfaceModel(Model):
         src_world_positions = src_ray_bundle.origins + src_ray_bundle.directions * outputs["depth"]
         reprojected_pixels, reprojected_z = self.project_points(src_world_positions, additional_inputs["ref_cameras"])
         reprojection_flow = reprojected_pixels - additional_inputs["src_pixels"]
-        # reprojection_flow[additional_inputs["reprojection_mask_indices"]] = 0
+        #reprojection_flow[additional_inputs["reprojection_mask_indices"]] = 0
         outputs["reprojection_flow"] = reprojection_flow
 
         ### Calculate z values
@@ -463,8 +463,8 @@ class SurfaceModel(Model):
                 loss_dict["tvl_loss"] = self.field.encoding.get_total_variation_loss() * self.config.periodic_tvl_mult
 
             # optical flow loss
-            # if "optical_flow" in batch and self.config.optical_flow_loss_mult > 0.0:
-            #     loss_dict["optical_flow_loss"] = self.optical_flow_loss(batch["optical_flow"], outputs["reprojection_flow"])
+            if "optical_flow" in batch and self.config.optical_flow_loss_mult > 0.0:
+                loss_dict["optical_flow_loss"] = self.optical_flow_loss(batch["optical_flow"], outputs["reprojection_flow"])
 
 
         return loss_dict
