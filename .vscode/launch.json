@@ -152,6 +152,21 @@
       ]
     },
     {
+      "name": "Python: train ours",
+      "type": "python",
+      "request": "launch",
+      "program": "scripts/train.py",
+      "console": "integratedTerminal",
+      "args": [
+        "our-test-nerf",
+        "--vis", "viewer",
+        "--viewer.websocket-port=114514",
+        "--pipeline.model.sdf-field.inside-outside", "False",
+        "--experiment-name", "our-nerf-davis",
+        "--data", "data/davis/train"
+      ]
+    },
+    {
       "name": "Python: train semantic_nerfw",
       "type": "python",
       "request": "launch",
