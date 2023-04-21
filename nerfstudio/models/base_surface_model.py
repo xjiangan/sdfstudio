@@ -216,6 +216,7 @@ class SurfaceModel(Model):
         )
         self.sensor_depth_loss = SensorDepthLoss(truncation=self.config.sensor_depth_truncation)
         self.optical_flow_loss = MaskedL1Loss()
+        self.disparity_loss = MaskedL1Loss()
 
         # metrics
         self.psnr = PeakSignalNoiseRatio(data_range=1.0)
@@ -470,14 +471,13 @@ class SurfaceModel(Model):
             # optical flow loss
             if "optical_flow" in batch and self.config.optical_flow_loss_mult > 0.0:
                 optical_flow_gt = batch["optical_flow"].to(self.device)
-                loss_dict["optical_flow_loss"] = self.optical_flow_loss(
+                loss_dict["optical_flow_loss"] = self.config.optical_flow_loss_mult * self.optical_flow_loss(
                     outputs["reprojection_flow"], optical_flow_gt, outputs["reprojection_mask_indices"])
 
             # z-disparity loss
             if "reprojected_z" in outputs and self.config.disparity_loss_mult > 0.0:
-                loss_dict["disparity_loss"] = self.optical_flow_loss(
+                loss_dict["disparity_loss"] = self.config.disparity_loss_mult * self.disparity_loss(
                     outputs["reprojected_z"], outputs["ref_z"], outputs["disparity_mask_indices"])
-
 
         return loss_dict
 
