@@ -615,3 +615,14 @@ class SensorDepthLoss(nn.Module):
         sdf_loss = torch.mean(((z_vals + pred_sdf) - depth_gt) ** 2 * sdf_mask) * sdf_weight
 
         return l1_loss, free_space_loss, sdf_loss
+
+
+class MaskedL1Loss(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, prediction, target, mask):
+        prediction[mask] = 0
+        target[mask] = 0
+        l1_loss = L1Loss()(prediction, target)
+        return l1_loss

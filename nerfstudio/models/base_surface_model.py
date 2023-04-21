@@ -42,6 +42,7 @@ from nerfstudio.model_components.losses import (
     L1Loss,
     MSELoss,
     MultiViewLoss,
+    MaskedL1Loss,
     ScaleAndShiftInvariantLoss,
     SensorDepthLoss,
     compute_scale_and_shift,
@@ -121,7 +122,8 @@ class SurfaceModelConfig(ModelConfig):
     """whether to use near and far collider from command line"""
     optical_flow_loss_mult = 0.1
     """Optical flow loss multiplier."""
-
+    disparity_loss_mult = 0.1
+    """Disparity loss multiplier."""
 
 class SurfaceModel(Model):
     """Base surface model
@@ -213,7 +215,7 @@ class SurfaceModel(Model):
             patch_size=self.config.patch_size, topk=self.config.topk, min_patch_variance=self.config.min_patch_variance
         )
         self.sensor_depth_loss = SensorDepthLoss(truncation=self.config.sensor_depth_truncation)
-        self.optical_flow_loss = L1Loss()
+        self.optical_flow_loss = MaskedL1Loss()
 
         # metrics
         self.psnr = PeakSignalNoiseRatio(data_range=1.0)
@@ -371,22 +373,24 @@ class SurfaceModel(Model):
         outputs = self.get_outputs(src_ray_bundle)
 
         ### Calculate reprojection flow
-        src_world_positions = src_ray_bundle.origins + src_ray_bundle.directions * outputs["depth"]
+        src_depth = outputs["depth"] * outputs["directions_norm"]
+        src_world_positions = src_ray_bundle.origins + src_ray_bundle.directions * src_depth
         reprojected_pixels, reprojected_z = self.project_points(src_world_positions, additional_inputs["ref_cameras"])
         reprojection_flow = reprojected_pixels - additional_inputs["src_pixels"]
-        #reprojection_flow[additional_inputs["reprojection_mask_indices"]] = 0
         outputs["reprojection_flow"] = reprojection_flow
+        outputs["reprojection_mask_indices"] = additional_inputs["reprojection_mask_indices"]
 
         ### Calculate z values
         samples_and_field_outputs = self.sample_and_forward_field(ray_bundle=ref_ray_bundle)
         ray_samples = samples_and_field_outputs["ray_samples"]
         weights = samples_and_field_outputs["weights"]
         ref_depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
-        ref_depth = ref_depth / ref_ray_bundle.directions_norm
+        # ref_depth = ref_depth / ref_ray_bundle.directions_norm
         ref_world_positions = ref_ray_bundle.origins + ref_ray_bundle.directions * ref_depth
         _, ref_z = self.project_points(ref_world_positions, additional_inputs["ref_cameras"])
         outputs["reprojected_z"] = reprojected_z
         outputs["ref_z"] = ref_z
+        outputs["disparity_mask_indices"] = additional_inputs["disparity_mask_indices"]
 
         return outputs
 
@@ -462,9 +466,17 @@ class SurfaceModel(Model):
                 assert self.field.config.encoding_type == "periodic"
                 loss_dict["tvl_loss"] = self.field.encoding.get_total_variation_loss() * self.config.periodic_tvl_mult
 
+
             # optical flow loss
             if "optical_flow" in batch and self.config.optical_flow_loss_mult > 0.0:
-                loss_dict["optical_flow_loss"] = self.optical_flow_loss(batch["optical_flow"], outputs["reprojection_flow"])
+                optical_flow_gt = batch["optical_flow"].to(self.device)
+                loss_dict["optical_flow_loss"] = self.optical_flow_loss(
+                    outputs["reprojection_flow"], optical_flow_gt, outputs["reprojection_mask_indices"])
+
+            # z-disparity loss
+            if "reprojected_z" in outputs and self.config.disparity_loss_mult > 0.0:
+                loss_dict["disparity_loss"] = self.optical_flow_loss(
+                    outputs["reprojected_z"], outputs["ref_z"], outputs["disparity_mask_indices"])
 
 
         return loss_dict
