@@ -549,64 +549,70 @@ class OurDataManager(VanillaDataManager):
         batch = self.train_pixel_sampler.sample(image_batch)
         src_ray_indices = batch["indices"]
         src_ray_bundle = self.train_ray_generator(src_ray_indices)
-        additional_output = {}
 
 
-        ### Preparation for reprojection flow loss
-        # indices of pixels on source cameras: (num_rays, 2)
-        additional_output["src_pixels"] = src_ray_bundle.coords[:, [1, 0]]
+        # Get source cameras
+        src_camera_indices = src_ray_bundle.camera_indices.to('cpu').squeeze() # (num_rays, )
+        src_cameras = self.train_dataset.cameras[src_camera_indices]
 
-        camera_indices = src_ray_bundle.camera_indices.to("cpu").squeeze().numpy()
-        camera_ids = np.unique(camera_indices)
-        src_pixels_np = additional_output["src_pixels"].to("cpu").numpy()
-        normals = np.empty((camera_indices.shape[0], 3))
-        depths = np.empty((camera_indices.shape[0]))
-        optical_flows = np.empty((camera_indices.shape[0], 2))
-        for c in camera_ids:
-            curr_entries = np.where(camera_indices == c)
+        # Get indices of pixels on source cameras
+        src_pixels = src_ray_bundle.coords[:, [1, 0]]  # (num_rays, 2)
+
+        # Load normal, depth, and optical_flow
+        src_camera_ids = np.unique(src_camera_indices)
+        src_pixels_np = src_pixels.to("cpu").numpy()
+        normal = np.empty((src_camera_indices.shape[0], 3))
+        depth = np.empty((src_camera_indices.shape[0]))
+        optical_flow = np.empty((src_camera_indices.shape[0], 2))
+        for c in src_camera_ids:
+            curr_entries = np.where(src_camera_indices == c)
             curr_src_pixels = src_pixels_np[curr_entries]
-            normals[curr_entries] = self.normals_train.at(c, curr_src_pixels[:, 0], curr_src_pixels[:, 1])
-            depths[curr_entries] = self.depths_train.at(c, curr_src_pixels[:, 0], curr_src_pixels[:, 1])
-            if c < camera_ids.max():
-                optical_flows[curr_entries] = self.optical_flows_train.at(
-                    c, curr_src_pixels[:, 0], curr_src_pixels[:, 1]
-                )
+            normal[curr_entries] = self.normals_train.at(c, curr_src_pixels[:, 0], curr_src_pixels[:, 1])
+            depth[curr_entries] = self.depths_train.at(c, curr_src_pixels[:, 0], curr_src_pixels[:, 1])
+            if c < src_camera_ids.max():
+                optical_flow[curr_entries] = self.optical_flows_train.at(
+                    c, curr_src_pixels[:, 0], curr_src_pixels[:, 1])
+        normal = torch.from_numpy(normal)
+        depth = torch.from_numpy(depth)
+        optical_flow = torch.from_numpy(optical_flow)
 
-        # indices of source cameras: (num_rays, )
-        src_camera_indices = src_ray_bundle.camera_indices.to('cpu').squeeze()
-        additional_output["src_cameras"] = self.train_dataset.cameras[src_camera_indices]
+        # Get indices of source rays whose reference cameras are not in training dataloader
+        reprojection_mask_indices = src_ray_bundle.camera_indices.eq(src_ray_bundle.camera_indices.to('cpu').max()) \
+            .long().to('cpu').squeeze().nonzero().squeeze() # (<num_rays, )
 
-        # indices of rays whose reference cameras are not in training dataloader: (<num_rays, )
-        reprojection_mask_indices = src_ray_bundle.camera_indices.eq(src_ray_bundle.camera_indices.to('cpu').max())\
-            .long().to('cpu').squeeze().nonzero().squeeze()
-        additional_output["reprojection_mask_indices"] = reprojection_mask_indices
-
-        # indices of reference cameras: (num_rays, )
-        ref_camera_indices = src_camera_indices + 1
+        # Get reference cameras
+        ref_camera_indices = src_camera_indices + 1 # (num_rays, )
         ref_camera_indices[reprojection_mask_indices] = 0
-        additional_output["ref_cameras"] = self.train_dataset.cameras[ref_camera_indices]
+        ref_cameras = self.train_dataset.cameras[ref_camera_indices]
 
+        # Get indices of reference rays
+        ref_ray_indices = torch.zeros(src_ray_indices.shape).long() # (num_rays, 3)
+        ref_ray_indices[:, 0] = ref_camera_indices # camera indices
+        ref_ray_indices[:, 1] = src_ray_indices[:, 1] + optical_flow[:, 1] # row indices, y_coords
+        ref_ray_indices[:, 2] = src_ray_indices[:, 2] + optical_flow[:, 0] # col indices, x_coords
 
-        ### Preparation for disparity loss
-        # height and width of a frame: (1, )
-        image_height = additional_output["src_cameras"].image_height[0]
-        image_width = additional_output["src_cameras"].image_width[0]
+        # Get height and width of a frame
+        image_height, image_width = src_cameras.image_height[0], src_cameras.image_width[0]  # (1, )
 
-        # indices of rays for reference cameras: (num_rays, 3)
-        ref_ray_indices = torch.zeros(src_ray_indices.shape).long()
-        ref_ray_indices[:, 0] = ref_camera_indices  # camera indices
-        batch["optical_flow"] = torch.ones(additional_output["src_pixels"].shape) * 50
-        ref_ray_indices[:, 1] = src_ray_indices[:, 1] + batch["optical_flow"][:, 1]  # row indices
-        ref_ray_indices[:, 2] = src_ray_indices[:, 2] + batch["optical_flow"][:, 0]  # col indices
-
-        # indices of rays whose resultant pixels are out of the border: (<num_rays, )
+        # Get indices of reference rays whose resultant pixels are out of the border
         mask_row = torch.logical_or(ref_ray_indices[:, 1] < 0, ref_ray_indices[:, 1] > image_height - 1)
         mask_col = torch.logical_or(ref_ray_indices[:, 2] < 0, ref_ray_indices[:, 2] > image_width - 1)
-        disparity_mask_indices = torch.logical_or(mask_row, mask_col).long().to('cpu').squeeze().nonzero().squeeze()
+        disparity_mask_indices = torch.logical_or(mask_row, mask_col).long().to('cpu').\
+            squeeze().nonzero().squeeze() # (<num_rays, )
         ref_ray_indices[disparity_mask_indices] = 0
-        additional_output["disparity_mask_indices"] = disparity_mask_indices
 
-        # ray bundle generated from reference cameras
+        # Generate ray bundle from reference cameras
         ref_ray_bundle = self.train_ray_generator(ref_ray_indices)
+
+        # Store results
+        batch["normal"] = normal
+        batch["depth"] = depth
+        batch["optical_flow"] = optical_flow
+        additional_output = {}
+        additional_output["src_pixels"] = src_pixels
+        additional_output["src_cameras"] = src_cameras
+        additional_output["ref_cameras"] = ref_cameras
+        additional_output["reprojection_mask_indices"] = reprojection_mask_indices
+        additional_output["disparity_mask_indices"] = disparity_mask_indices
 
         return src_ray_bundle, ref_ray_bundle, batch, additional_output
