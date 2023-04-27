@@ -51,12 +51,15 @@ class DataPreprocessorBase:
                 os.makedirs(self.cache_folder)
             if path.exists(path.join(self.cache_folder, "data.npy")):
                 self.data = np.load(path.join(self.cache_folder, "data.npy"))
-                self.load_meta()
+                meta_data = pickle.load(open(path.join(self.cache_folder, "meta.pkl"), "rb"))
+                self.load_meta(meta_data)
 
         if self.data is None:
             self.data = self.preprocess(frames)
-            self.init_meta(frames)
-            np.save(path.join(self.cache_folder, "data.npy"), self.data)
+            meta = self.init_meta(frames)
+            if cache_folder is not None:
+                pickle.dump(meta, open(path.join(self.cache_folder, "meta.pkl"), "wb"))
+                np.save(path.join(self.cache_folder, "data.npy"), self.data)
 
     # def get_frames_vid(self, f_name):
     #     frames, _, _ = read_video(path.join(self.base_folder, f_name), output_format="TCHW")
@@ -71,7 +74,7 @@ class DataPreprocessorBase:
     def init_meta(self, frames):
         raise RuntimeError("This is an abstract class!!")
 
-    def load_meta(self):
+    def load_meta(self, meta_data):
         raise RuntimeError("This is an abstract class!!")
 
     def preprocess(self, frames):
@@ -125,11 +128,10 @@ class OpticalFlowRAFT(DataPreprocessorBase):
         self.xs = (tmp[1:] + tmp[:-1]) / 2
         self.flows = self.data
         meta_data = {"n_frames": self.n_frames, "ys": self.ys, "xs": self.xs}
-        pickle.dump(meta_data, open(path.join(self.cache_folder, "meta.pkl"), "wb"))
+        return meta_data
 
-    def load_meta(self):
+    def load_meta(self, meta_data):
         self.flows = self.data
-        meta_data = pickle.load(open(path.join(self.cache_folder, "meta.pkl"), "rb"))
         self.n_frames = meta_data["n_frames"]
         self.ys = meta_data["ys"]
         self.xs = meta_data["xs"]
@@ -155,11 +157,10 @@ class NormalOmniData(DataPreprocessorBase):
         tmp = np.linspace(0, self.img_w, self.model_input_W + 1)
         self.xs = (tmp[1:] + tmp[:-1]) / 2
         meta_data = {"n_frames": self.n_frames, "ys": self.ys, "xs": self.xs}
-        pickle.dump(meta_data, open(path.join(self.cache_folder, "meta.pkl"), "wb"))
+        return meta_data
 
-    def load_meta(self):
+    def load_meta(self, meta_data):
         self.normals = self.data
-        meta_data = pickle.load(open(path.join(self.cache_folder, "meta.pkl"), "rb"))
         self.n_frames = meta_data["n_frames"]
         self.ys = meta_data["ys"]
         self.xs = meta_data["xs"]
@@ -236,11 +237,10 @@ class DepthOmniData(DataPreprocessorBase):
         tmp = np.linspace(0, self.img_w, self.model_input_W + 1)
         self.xs = (tmp[1:] + tmp[:-1]) / 2
         meta_data = {"n_frames": self.n_frames, "ys": self.ys, "xs": self.xs}
-        pickle.dump(meta_data, open(path.join(self.cache_folder, "meta.pkl"), "wb"))
+        return meta_data
 
-    def load_meta(self):
+    def load_meta(self, meta_data):
         self.depths = self.data
-        meta_data = pickle.load(open(path.join(self.cache_folder, "meta.pkl"), "rb"))
         self.n_frames = meta_data["n_frames"]
         self.ys = meta_data["ys"]
         self.xs = meta_data["xs"]
@@ -385,6 +385,14 @@ class DepthOmniData(DataPreprocessorBase):
 #                 np.save(path.join(self.cache_folder, f"{i}.npy"), result)
 
 
-# if __name__ == "__main__":
-#     optical_flow = DepthOmniData("preprocessor\\test\\blackswan", (f"{i:05d}.jpg" for i in range(50)))
-#     print(optical_flow.at(10, [0, 10, 100], [0, 10, 100]))
+if __name__ == "__main__":
+    root_dir = "C:\\Users\\yanks\\Documents\\ETH\\3DV\\sdfstudio\\data\\davis\\train\\images"
+    num_frames = len([f for f in os.listdir(root_dir) if f.endswith(".jpg")])
+    frames = []
+    for i in range(num_frames):
+        img = plt.imread(path.join(root_dir, f"frame_{i+1:05d}.jpg"))
+        frames.append(img)
+    frames = np.stack(frames, axis=0)
+    frames = torch.from_numpy(frames).permute(0, 3, 1, 2).float()
+    optical_flow = NormalOmniData(frames)
+    print(optical_flow.at(10, [0, 10, 100], [0, 10, 100]))
