@@ -374,13 +374,58 @@ method_configs["monosdf"] = Config(
             train_num_rays_per_batch=1024,
             eval_num_rays_per_batch=1024,
             camera_optimizer=CameraOptimizerConfig(
-                mode="SO3xR3", # "off" "SO3xR3"
+                mode="off", # "off" "SO3xR3"
                 optimizer=AdamOptimizerConfig(lr=6e-4, eps=1e-8, weight_decay=1e-2),
                 position_noise_std=0.0,
                 orientation_noise_std=0.0,
             ),
         ),
         model=VolSDFModelConfig(mono_depth_loss_mult=0.1, mono_normal_loss_mult=0.05, eval_num_rays_per_chunk=1024),
+    ),
+    optimizers={
+        "fields": {
+            "optimizer": AdamOptimizerConfig(lr=5e-4, eps=1e-15),
+            "scheduler": ExponentialSchedulerConfig(decay_rate=0.1, max_steps=200000),
+        },
+        "field_background": {
+            "optimizer": AdamOptimizerConfig(lr=5e-4, eps=1e-15),
+            "scheduler": ExponentialSchedulerConfig(decay_rate=0.1, max_steps=200000),
+        },
+    },
+    viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
+    vis="viewer",
+)
+
+method_configs["monosdf-test"] = Config(
+    method_name="monosdf-test",
+    trainer=TrainerConfig(
+        steps_per_eval_image=5000,
+        steps_per_eval_batch=5000,
+        steps_per_save=20000,
+        steps_per_eval_all_images=1000000,  # set to a very large model so we don't eval with all images
+        max_num_iterations=200000,
+        mixed_precision=False,
+    ),
+    pipeline=OurInputPipelineConfig(
+        datamanager=OurDataManagerConfig(
+            dataparser=SDFStudioDataParserConfig(),
+            train_num_rays_per_batch=1024,
+            eval_num_rays_per_batch=1024,
+            eval_num_images_to_sample_from=5,
+            eval_num_times_to_repeat_images=0,
+            camera_optimizer=CameraOptimizerConfig(
+                mode="off",  # "SO3xR3"
+                optimizer=AdamOptimizerConfig(lr=6e-4, eps=1e-8, weight_decay=1e-2),
+                position_noise_std=0.0,
+                orientation_noise_std=0.0,
+            ),
+        ),
+        model=OurNeRFModelConfig(
+            mono_normal_loss_mult=0.01,
+            mono_depth_loss_mult=0.05,
+            patch_warp_loss_mult=0.1,
+            eval_num_rays_per_chunk=1024,
+        ),
     ),
     optimizers={
         "fields": {
