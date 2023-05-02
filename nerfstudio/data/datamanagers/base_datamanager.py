@@ -32,6 +32,8 @@ from torch.nn import Parameter
 from torch.utils.data import Dataset
 from torch.utils.data.distributed import DistributedSampler
 from typing_extensions import Literal
+import matplotlib.pyplot as plt
+from scipy.interpolate import RegularGridInterpolator
 
 from nerfstudio.cameras.camera_optimizers import CameraOptimizerConfig
 from nerfstudio.cameras.cameras import CameraType
@@ -552,11 +554,14 @@ class OurDataManager(VanillaDataManager):
 
 
         # Get source cameras
-        src_camera_indices = src_ray_bundle.camera_indices.to('cpu').squeeze() # (num_rays, )
+        src_camera_indices = src_ray_bundle.camera_indices.to('cpu').squeeze() # size: (num_rays, )
         src_cameras = self.train_dataset.cameras[src_camera_indices]
 
+        # Get height and width of a frame
+        image_height, image_width = src_cameras.image_height[0], src_cameras.image_width[0]  # size: (1, )
+
         # Get indices of pixels on source cameras
-        src_pixels = src_ray_bundle.coords[:, [1, 0]]  # (num_rays, 2)
+        src_pixels = src_ray_bundle.coords[:, [1, 0]]  # size: (num_rays, 2), order: (x_coords, y_coords)
 
         # Load normal, depth, and optical_flow
         src_camera_ids = np.unique(src_camera_indices)
@@ -576,29 +581,93 @@ class OurDataManager(VanillaDataManager):
         depth = torch.from_numpy(depth)
         optical_flow = torch.from_numpy(optical_flow)
 
+        # ### Verification 1 (debugging only): x&y optical flow heatmap
+        # for _tested_camera in range(70):
+        #     _src_camera_ids = np.ones((1,), dtype=int) * _tested_camera
+        #     _src_camera_indices = np.ones((image_height * image_width,), dtype=int) * _tested_camera
+        #     _src_pixels_np = np.indices((image_height, image_width)).transpose((1, 2, 0)).reshape((-1, 2)).astype(np.float32)
+        #     _src_pixels_np = _src_pixels_np[:, [1, 0]]
+        #     _normal = np.empty((_src_pixels_np.shape[0], 3))
+        #     _depth = np.empty((_src_pixels_np.shape[0]))
+        #     _optical_flow = np.empty((_src_pixels_np.shape[0], 2))
+        #     for _c in _src_camera_ids:
+        #         _curr_entries = np.where(_src_camera_indices == _c)
+        #         _curr_src_pixels = _src_pixels_np[_curr_entries]
+        #         _normal[_curr_entries] = self.normals_train.at(_c, _curr_src_pixels[:, 0], _curr_src_pixels[:, 1])
+        #         _depth[_curr_entries] = self.depths_train.at(_c, _curr_src_pixels[:, 0], _curr_src_pixels[:, 1])
+        #         if _c <= _src_camera_ids.max():
+        #             _optical_flow[_curr_entries] = self.optical_flows_train.at(
+        #                 _c, _curr_src_pixels[:, 0], _curr_src_pixels[:, 1])
+        #     _depth_mat = _depth.reshape((image_height, image_width))
+        #     _optical_flow_x_mat = _optical_flow[:, 0].reshape((image_height, image_width))
+        #     _optical_flow_y_mat = _optical_flow[:, 1].reshape((image_height, image_width))
+        #     if _tested_camera % 10 == 0:
+        #         fig, axs = plt.subplots(1, 3, figsize=(12, 4))
+        #         axs[0].imshow(_depth_mat)
+        #         axs[0].set_title('depth')
+        #         axs[1].imshow(_optical_flow_x_mat)
+        #         axs[1].set_title('optical_flow_x')
+        #         axs[2].imshow(_optical_flow_y_mat)
+        #         axs[2].set_title('optical_flow_y')
+        #         fig.suptitle('camera {}'.format(_tested_camera), x=0.5, y=0.8)
+        #         plt.show()
+
+        # ### Verification 2 (debugging only): warp from src to ref using optical flow
+        # _tested_camera = 0 # [0, 70]
+        # _tested_src_camera_idx = torch.where(image_batch["image_idx"] == _tested_camera)[0]
+        # _tested_ref_camera_idx = torch.where(image_batch["image_idx"] == _tested_camera+1)[0]
+        # _src_img = image_batch["image"][_tested_src_camera_idx.to('cpu').squeeze()].numpy()
+        # _ref_img = image_batch["image"][_tested_ref_camera_idx.to('cpu').squeeze()].numpy()
+        # _src_camera_ids = np.ones((1,), dtype=int) * _tested_camera
+        # _src_camera_indices = np.ones((image_height * image_width,), dtype=int) * _tested_camera
+        # _src_pixels_np = np.indices((image_height, image_width)).transpose((1, 2, 0)).reshape((-1, 2)).astype(np.float32)
+        # _src_pixels_np = _src_pixels_np[:, [1, 0]]
+        # _normal = np.empty((_src_pixels_np.shape[0], 3))
+        # _depth = np.empty((_src_pixels_np.shape[0]))
+        # _optical_flow = np.empty((_src_pixels_np.shape[0], 2))
+        # for _c in _src_camera_ids:
+        #     _curr_entries = np.where(_src_camera_indices == _c)
+        #     _curr_src_pixels = _src_pixels_np[_curr_entries]
+        #     _normal[_curr_entries] = self.normals_train.at(_c, _curr_src_pixels[:, 0], _curr_src_pixels[:, 1])
+        #     _depth[_curr_entries] = self.depths_train.at(_c, _curr_src_pixels[:, 0], _curr_src_pixels[:, 1])
+        #     if _c <= _src_camera_ids.max():
+        #         _optical_flow[_curr_entries] = self.optical_flows_train.at(
+        #             _c, _curr_src_pixels[:, 0], _curr_src_pixels[:, 1])
+        # _warped_pixels_np = _src_pixels_np + _optical_flow
+        # _interp = RegularGridInterpolator((np.arange(image_height), np.arange(image_width)), _ref_img)
+        # _warped_X = _warped_pixels_np[:, 0].reshape((image_height, image_width)).clip(0, image_width-1)
+        # _warped_Y = _warped_pixels_np[:, 1].reshape((image_height, image_width)).clip(0, image_height-1)
+        # _warped_img = _interp((_warped_Y, _warped_X))
+        # plt.imshow(_src_img)
+        # plt.title("source image")
+        # plt.show()
+        # plt.imshow(_ref_img)
+        # plt.title("reference image")
+        # plt.show()
+        # plt.imshow(_warped_img)
+        # plt.title("warped image")
+        # plt.show()
+
         # Get indices of source rays whose reference cameras are not in training dataloader
         reprojection_mask_indices = src_ray_bundle.camera_indices.eq(src_ray_bundle.camera_indices.to('cpu').max()) \
-            .long().to('cpu').squeeze().nonzero().squeeze() # (<num_rays, )
+            .long().to('cpu').squeeze().nonzero().squeeze() # size: (<num_rays, )
 
         # Get reference cameras
-        ref_camera_indices = src_camera_indices + 1 # (num_rays, )
+        ref_camera_indices = src_camera_indices + 1 # size: (num_rays, )
         ref_camera_indices[reprojection_mask_indices] = 0
         ref_cameras = self.train_dataset.cameras[ref_camera_indices]
 
         # Get indices of reference rays
-        ref_ray_indices = torch.zeros(src_ray_indices.shape).long() # (num_rays, 3)
+        ref_ray_indices = torch.zeros(src_ray_indices.shape).long() # size: (num_rays, 3)
         ref_ray_indices[:, 0] = ref_camera_indices # camera indices
         ref_ray_indices[:, 1] = src_ray_indices[:, 1] + optical_flow[:, 1] # row indices, y_coords
         ref_ray_indices[:, 2] = src_ray_indices[:, 2] + optical_flow[:, 0] # col indices, x_coords
-
-        # Get height and width of a frame
-        image_height, image_width = src_cameras.image_height[0], src_cameras.image_width[0]  # (1, )
 
         # Get indices of reference rays whose resultant pixels are out of the border
         mask_row = torch.logical_or(ref_ray_indices[:, 1] < 0, ref_ray_indices[:, 1] > image_height - 1)
         mask_col = torch.logical_or(ref_ray_indices[:, 2] < 0, ref_ray_indices[:, 2] > image_width - 1)
         disparity_mask_indices = torch.logical_or(mask_row, mask_col).long().to('cpu').\
-            squeeze().nonzero().squeeze() # (<num_rays, )
+            squeeze().nonzero().squeeze() # size: (<num_rays, )
         ref_ray_indices[disparity_mask_indices] = 0
 
         # Generate ray bundle from reference cameras
