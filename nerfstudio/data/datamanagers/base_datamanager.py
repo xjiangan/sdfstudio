@@ -581,8 +581,8 @@ class OurDataManager(VanillaDataManager):
         depth = torch.from_numpy(depth)
         optical_flow = torch.from_numpy(optical_flow)
 
-        # ### Verification 1 (debugging only): x&y optical flow heatmap
-        # for _tested_camera in range(70):
+        # ### Verification 1 (debugging only): heatmap of depth and optical flow (x&y)
+        # for _tested_camera in range(src_camera_ids.max()-1):
         #     _src_camera_ids = np.ones((1,), dtype=int) * _tested_camera
         #     _src_camera_indices = np.ones((image_height * image_width,), dtype=int) * _tested_camera
         #     _src_pixels_np = np.indices((image_height, image_width)).transpose((1, 2, 0)).reshape((-1, 2)).astype(np.float32)
@@ -613,7 +613,7 @@ class OurDataManager(VanillaDataManager):
         #         plt.show()
 
         # ### Verification 2 (debugging only): warp from src to ref using optical flow
-        # _tested_camera = 0 # [0, 70]
+        # _tested_camera = 0 # [0, src_camera_ids.max()-1]
         # _tested_src_camera_idx = torch.where(image_batch["image_idx"] == _tested_camera)[0]
         # _tested_ref_camera_idx = torch.where(image_batch["image_idx"] == _tested_camera+1)[0]
         # _src_img = image_batch["image"][_tested_src_camera_idx.to('cpu').squeeze()].numpy()
