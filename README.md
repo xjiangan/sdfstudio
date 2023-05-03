@@ -46,7 +46,7 @@ pip install git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/to
 ### Installing SDFStudio
 
 ```bash
-git clone git@github.com:xjiangan/sdfstudio.git
+git clone --recursive https://github.com/xjiangan/sdfstudio.git
 cd sdfstudio
 pip install --upgrade pip setuptools
 pip install -e .
