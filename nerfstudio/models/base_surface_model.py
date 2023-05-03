@@ -120,9 +120,9 @@ class SurfaceModelConfig(ModelConfig):
     """Total variational loss mutliplier"""
     overwrite_near_far_plane: bool = False
     """whether to use near and far collider from command line"""
-    optical_flow_loss_mult = 0.1
+    optical_flow_loss_mult = 0.0
     """Optical flow loss multiplier."""
-    disparity_loss_mult = 0.1
+    disparity_loss_mult = 0.0
     """Disparity loss multiplier."""
 
 class SurfaceModel(Model):
