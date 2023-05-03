@@ -581,7 +581,7 @@ class OurDataManager(VanillaDataManager):
         depth = torch.from_numpy(depth)
         optical_flow = torch.from_numpy(optical_flow)
 
-        # ### Verification 1 (debugging only): heatmap of depth and optical flow (x&y)
+        # ### Verification 1 (debugging only): heatmap of depth + normal + optical flow (x&y)
         # for _tested_camera in range(src_camera_ids.max()-1):
         #     _src_camera_ids = np.ones((1,), dtype=int) * _tested_camera
         #     _src_camera_indices = np.ones((image_height * image_width,), dtype=int) * _tested_camera
@@ -599,17 +599,21 @@ class OurDataManager(VanillaDataManager):
         #             _optical_flow[_curr_entries] = self.optical_flows_train.at(
         #                 _c, _curr_src_pixels[:, 0], _curr_src_pixels[:, 1])
         #     _depth_mat = _depth.reshape((image_height, image_width))
+        #     _normal_mat = _normal.reshape((image_height, image_width, 3))
         #     _optical_flow_x_mat = _optical_flow[:, 0].reshape((image_height, image_width))
         #     _optical_flow_y_mat = _optical_flow[:, 1].reshape((image_height, image_width))
         #     if _tested_camera % 10 == 0:
-        #         fig, axs = plt.subplots(1, 3, figsize=(12, 4))
-        #         axs[0].imshow(_depth_mat)
-        #         axs[0].set_title('depth')
-        #         axs[1].imshow(_optical_flow_x_mat)
-        #         axs[1].set_title('optical_flow_x')
-        #         axs[2].imshow(_optical_flow_y_mat)
-        #         axs[2].set_title('optical_flow_y')
-        #         fig.suptitle('camera {}'.format(_tested_camera), x=0.5, y=0.8)
+        #         fig, axs = plt.subplots(2, 2)
+        #         axs[0,0].imshow(_depth_mat)
+        #         axs[0,0].set_title('depth')
+        #         axs[0,1].imshow(_normal_mat)
+        #         axs[0,1].set_title('normal')
+        #         axs[1,0].imshow(_optical_flow_x_mat)
+        #         axs[1,0].set_title('optical flow x')
+        #         axs[1,1].imshow(_optical_flow_y_mat)
+        #         axs[1,1].set_title('optical flow y')
+        #         fig.subplots_adjust(wspace=0.2, hspace=0.5)
+        #         fig.suptitle('camera {}'.format(_tested_camera))
         #         plt.show()
 
         # ### Verification 2 (debugging only): warp from src to ref using optical flow
