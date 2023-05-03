@@ -38,7 +38,8 @@ class ComputePSNR:
         """Main function."""
         config, pipeline, checkpoint_path = eval_setup(self.load_config)
         assert self.output_path.suffix == ".json"
-        metrics_dict, images_dict_list = pipeline.get_average_eval_image_metrics()
+        # metrics_dict, images_dict_list = pipeline.get_average_eval_image_metrics()
+        metrics_dict = pipeline.get_average_eval_image_metrics()
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         self.output_images_path.mkdir(parents=True, exist_ok=True)
 
@@ -53,12 +54,12 @@ class ComputePSNR:
         self.output_path.write_text(json.dumps(benchmark_info, indent=2), "utf8")
         CONSOLE.print(f"Saved results to: {self.output_path}")
 
-        for idx, images_dict in enumerate(images_dict_list):
-            for k, v in images_dict.items():
-                cv2.imwrite(
-                    str(self.output_images_path / Path(f"{k}_{idx}.png")),
-                    (v.cpu().numpy() * 255.0).astype(np.uint8)[..., ::-1],
-                )
+        # for idx, images_dict in enumerate(images_dict_list):
+        #     for k, v in images_dict.items():
+        #         cv2.imwrite(
+        #             str(self.output_images_path / Path(f"{k}_{idx}.png")),
+        #             (v.cpu().numpy() * 255.0).astype(np.uint8)[..., ::-1],
+        #         )
         CONSOLE.print(f"Saved rendering results to: {self.output_images_path}")
 
 
