@@ -18,10 +18,9 @@ from __future__ import annotations
 import contextlib
 import threading
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, Tuple, get_args
 
 import torch
-from typing_extensions import Literal, get_args
 
 from nerfstudio.cameras.cameras import Cameras, CameraType
 from nerfstudio.model_components.renderers import background_color_override_context
@@ -79,6 +78,7 @@ class RenderStateMachine(threading.Thread):
         self.viewer = viewer
         self.interrupt_render_flag = False
         self.daemon = True
+        self.output_keys = {}
 
     def action(self, action: RenderAction):
         """Takes an action and updates the state machine
@@ -159,7 +159,7 @@ class RenderStateMachine(threading.Thread):
         )
         camera = camera.to(self.viewer.get_model().device)
 
-        with (self.viewer.train_lock if self.viewer.train_lock is not None else contextlib.nullcontext()):
+        with self.viewer.train_lock if self.viewer.train_lock is not None else contextlib.nullcontext():
             camera_ray_bundle = camera.generate_rays(camera_indices=0, aabb_box=self.viewer.get_model().render_aabb)
 
             with TimeWriter(None, None, write=False) as vis_t:
@@ -227,7 +227,11 @@ class RenderStateMachine(threading.Thread):
         Args:
             outputs: the dictionary of outputs to choose from, from the model
         """
-        self.viewer.control_panel.update_output_options(list(outputs.keys()))
+        output_keys = set(outputs.keys())
+        if self.output_keys != output_keys:
+            self.output_keys = output_keys
+            self.viewer.viser_server.send_output_options_message(list(outputs.keys()))
+            self.viewer.control_panel.update_output_options(list(outputs.keys()))
 
         output_render = self.viewer.control_panel.output_render
         self.viewer.update_colormap_options(
