@@ -23,17 +23,17 @@ from abc import abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import tyro
 from rich.progress import Console
+from scipy.interpolate import RegularGridInterpolator
 from torch import nn
 from torch.nn import Parameter
 from torch.utils.data import Dataset
 from torch.utils.data.distributed import DistributedSampler
 from typing_extensions import Literal
-import matplotlib.pyplot as plt
-from scipy.interpolate import RegularGridInterpolator
 
 from nerfstudio.cameras.camera_optimizers import CameraOptimizerConfig
 from nerfstudio.cameras.cameras import CameraType
@@ -55,6 +55,7 @@ from nerfstudio.data.dataparsers.mipnerf360_dataparser import Mipnerf360DataPars
 from nerfstudio.data.dataparsers.monosdf_dataparser import MonoSDFDataParserConfig
 from nerfstudio.data.dataparsers.nerfstudio_dataparser import NerfstudioDataParserConfig
 from nerfstudio.data.dataparsers.nuscenes_dataparser import NuScenesDataParserConfig
+from nerfstudio.data.dataparsers.our_dataparser import OurDataParserConfig
 from nerfstudio.data.dataparsers.phototourism_dataparser import (
     PhototourismDataParserConfig,
 )
@@ -91,6 +92,7 @@ AnnotatedDataParserUnion = tyro.conf.OmitSubcommandPrefixes[  # Omit prefixes of
             "monosdf-data": MonoSDFDataParserConfig(),
             "sdfstudio-data": SDFStudioDataParserConfig(),
             "heritage-data": HeritageDataParserConfig(),
+            "our-data": OurDataParserConfig(),
         },
         prefix_names=False,  # Omit prefixes in subcommands themselves.
     )
