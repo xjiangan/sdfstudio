@@ -25,6 +25,6 @@ class PointProjectors(nn.Module):
 
         # Reference cameras space -> Reference pixels
         x_coords = fx * positions[:, [0]] / (-positions[:, [2]]) + cx
-        y_coords = fy * positions[:, [1]] / (-positions[:, [2]]) + cy
+        y_coords = - fy * positions[:, [1]] / (-positions[:, [2]]) + cy
         ref_pixels = torch.concatenate((x_coords, y_coords), dim=1)
         return ref_pixels, -positions[:, [2]]
