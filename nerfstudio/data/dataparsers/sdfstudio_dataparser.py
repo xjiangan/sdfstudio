@@ -76,6 +76,7 @@ class SDFStudio(DataParser):
         image_filenames = []
         depth_filenames = []
         normal_filenames = []
+        mask_filenames = []
         transform = None
         fx = []
         fy = []
@@ -89,6 +90,7 @@ class SDFStudio(DataParser):
             image_filename = self.config.data / frame["rgb_path"]
             depth_filename = self.config.data / frame["mono_depth_path"]
             normal_filename = self.config.data / frame["mono_normal_path"]
+            mask_filename = self.config.data / frame["foreground_mask"]
 
             intrinsics = torch.tensor(frame["intrinsics"])
             camtoworld = torch.tensor(frame["camtoworld"])
@@ -97,6 +99,7 @@ class SDFStudio(DataParser):
             image_filenames.append(image_filename)
             depth_filenames.append(depth_filename)
             normal_filenames.append(normal_filename)
+            mask_filenames.append(mask_filename)
             fx.append(intrinsics[0, 0])
             fy.append(intrinsics[1, 1])
             cx.append(intrinsics[0, 2])
@@ -146,6 +149,7 @@ class SDFStudio(DataParser):
 
         dataparser_outputs = DataparserOutputs(
             image_filenames=image_filenames,
+            mask_filenames=mask_filenames if len(mask_filenames) > 0 else None,
             cameras=cameras,
             scene_box=scene_box,
             metadata={
