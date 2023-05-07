@@ -389,10 +389,42 @@ if __name__ == "__main__":
     root_dir = "C:\\Users\\yanks\\Documents\\ETH\\3DV\\sdfstudio\\data\\davis\\train\\images"
     num_frames = len([f for f in os.listdir(root_dir) if f.endswith(".jpg")])
     frames = []
-    for i in range(num_frames):
+    for i in [0, 1]:
         img = plt.imread(path.join(root_dir, f"frame_{i+1:05d}.jpg"))
         frames.append(img)
     frames = np.stack(frames, axis=0)
     frames = torch.from_numpy(frames).permute(0, 3, 1, 2).float()
-    optical_flow = NormalOmniData(frames)
-    print(optical_flow.at(10, [0, 10, 100], [0, 10, 100]))
+    optical_flow = OpticalFlowRAFT(frames)
+    # warp the first frame to the second frame using the optical flow
+    first_frame = frames[0].numpy().transpose(1, 2, 0) / 255.0
+    plt.subplot(2, 2, 1)
+    plt.imshow(first_frame)
+    pixel_coords = np.mgrid[0 : first_frame.shape[0], 0 : first_frame.shape[1]].astype(np.float32) + 0.5
+    flattened_coords = pixel_coords.reshape(2, -1)
+    flow = optical_flow.at(0, flattened_coords[1], flattened_coords[0])
+    flow_grid = flow.reshape(2, first_frame.shape[0], first_frame.shape[1])
+    step = 30
+    plt.quiver(
+        pixel_coords[1, ::step, ::step],
+        pixel_coords[0, ::step, ::step],
+        flow_grid[1, ::step, ::step],
+        flow_grid[0, ::step, ::step],
+    )
+
+    second_frame = frames[1].numpy().transpose(1, 2, 0) / 255.0
+    plt.subplot(2, 2, 2)
+    plt.imshow(second_frame)
+
+    plt.subplot(2, 2, 3)
+    plt.imshow(np.linalg.norm(optical_flow.flows[0], axis=-1))
+
+    warped_coords = flattened_coords + flow.transpose(1, 0)
+    interpolator = RegularGridInterpolator(
+        (pixel_coords[0, :, 0], pixel_coords[1, 0, :]), first_frame, bounds_error=False, fill_value=0
+    )
+    warped_first = interpolator((warped_coords[0], warped_coords[1]))
+    warped_first = warped_first.reshape(first_frame.shape)
+    plt.subplot(2, 2, 4)
+    plt.imshow(warped_first)
+    plt.show()
+    # print(optical_flow.at(10, [0, 10, 100], [0, 10, 100]))
