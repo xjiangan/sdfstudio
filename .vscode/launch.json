@@ -169,5 +169,22 @@
         "--auto-orient=True"
       ]
     },
+    {
+      "name": "Python: NeuS-facto on Davis (no mono-prior)",
+      "type": "python",
+      "request": "launch",
+      "program": "scripts/train.py",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {"CUDA_VISIBLE_DEVICES":"0"},
+      "args": [
+        "neus-facto",
+        "--pipeline.model.sdf-field.inside-outside=False",
+        "sdfstudio-data",
+        "--data=data/davis/train",
+        "--include_mono_prior=False",
+        "--auto-orient=False"
+      ]
+    },
   ]
 }
