@@ -299,7 +299,8 @@ class Trainer:
         table.add_row("Checkpoint Directory", str(self.checkpoint_dir))
         CONSOLE.print(Panel(table, title="[bold][green]:tada: Training Finished :tada:[/bold]", expand=False))
 
-        self._train_complete_viewer()
+        if not self.config.viewer.quit_on_train_completion:
+            self._train_complete_viewer()
 
     @check_main_thread
     def _check_viewer_warnings(self) -> None:
@@ -344,8 +345,7 @@ class Trainer:
     def _train_complete_viewer(self) -> None:
         """Let the viewer know that the training is complete"""
         assert self.viewer_state is not None
-        if not self.config.viewer.quit_on_train_completion:
-            self.training_state = "completed"
+        self.training_state = "completed"
         try:
             self.viewer_state.training_complete()
         except RuntimeError:
@@ -461,8 +461,11 @@ class Trainer:
 
             metrics_dict["Gradients/Total"] = total_grad
 
+        scale = self.grad_scaler.get_scale()
         self.grad_scaler.update()
-        self.optimizers.scheduler_step_all(step)
+        # If the gradient scaler is decreased, no optimization step is performed so we should not step the scheduler.
+        if scale <= self.grad_scaler.get_scale():
+            self.optimizers.scheduler_step_all(step)
 
         # Merging loss and metrics dict into a single output.
         return loss, loss_dict, metrics_dict
