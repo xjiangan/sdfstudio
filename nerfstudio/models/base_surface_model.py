@@ -115,15 +115,12 @@ class SurfaceModelConfig(ModelConfig):
     background_model: Literal["grid", "mlp", "none"] = "mlp"
     """background models"""
     num_samples_outside: int = 32
-    """Number of samples outside the bounding sphere for backgound"""
+    """Number of samples outside the bounding sphere for background"""
     periodic_tvl_mult: float = 0.0
-    """Total variational loss mutliplier"""
+    """Total variational loss multiplier"""
     overwrite_near_far_plane: bool = False
     """whether to use near and far collider from command line"""
-    optical_flow_loss_mult = 0.0
-    """Optical flow loss multiplier."""
-    disparity_loss_mult = 0.0
-    """Disparity loss multiplier."""
+
 
 class SurfaceModel(Model):
     """Base surface model

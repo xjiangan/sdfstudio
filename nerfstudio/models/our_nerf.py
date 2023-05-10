@@ -29,14 +29,17 @@ class OurNeRFModelConfig(VolSDFModelConfig):
     """Our NeRF Model Config"""
 
     _target: Type = field(default_factory=lambda: OurNeRFModel)
-    mono_normal_loss_mult: float = 0.1
+    mono_normal_loss_mult: float = 0.0
     """Monocular normal consistency loss multiplier."""
-    mono_depth_loss_mult: float = 0.05
+    mono_depth_loss_mult: float = 0.0
     """Monocular depth consistency loss multiplier."""
-
+    optical_flow_loss_mult: float = 0.0
+    """Optical flow loss multiplier."""
+    disparity_loss_mult: float = 0.0
+    """Disparity loss multiplier."""
 
 class OurNeRFModel(VolSDFModel):
-    """TestNeRF model
+    """OurNeRF model
 
     Args:
         config: TestNeRFModel configuration to instantiate model

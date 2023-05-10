@@ -973,45 +973,6 @@ method_configs["nerfacto"] = Config(
     vis="viewer",
 )
 
-method_configs["our-nerfacto"] = Config(
-    method_name="our-nerfacto",
-    trainer=TrainerConfig(
-        steps_per_eval_batch=5000,
-        steps_per_save=2000,
-        max_num_iterations=30000,
-        mixed_precision=False
-    ),
-    pipeline=OurInputPipelineConfig(
-        datamanager=OurDataManagerConfig(
-            dataparser=NerfstudioDataParserConfig(),
-            train_num_rays_per_batch=2048,
-            eval_num_rays_per_batch=2048,
-            camera_optimizer=CameraOptimizerConfig(
-                mode="SO3xR3",
-                optimizer=AdamOptimizerConfig(lr=6e-4, eps=1e-8, weight_decay=1e-2)
-            ),
-        ),
-        model=OurNeRFModelConfig(
-            mono_normal_loss_mult=0.01,
-            mono_depth_loss_mult=0.001,
-            patch_warp_loss_mult=0.01,
-            eval_num_rays_per_chunk=1024,
-        ),
-    ),
-    optimizers={
-        "fields": {
-            "optimizer": AdamOptimizerConfig(lr=5e-4, eps=1e-15),
-            "scheduler": ExponentialSchedulerConfig(decay_rate=0.1, max_steps=100000),
-        },
-        "field_background": {
-            "optimizer": AdamOptimizerConfig(lr=5e-4, eps=1e-15),
-            "scheduler": ExponentialSchedulerConfig(decay_rate=0.1, max_steps=200000),
-        },
-    },
-    viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
-    vis="viewer",
-)
-
 method_configs["vanilla-nerf"] = Config(
     method_name="vanilla-nerf",
     pipeline=VanillaPipelineConfig(
@@ -1143,6 +1104,8 @@ method_configs["our-test-nerf"] = Config(
         model=OurNeRFModelConfig(
             mono_normal_loss_mult=0.01,
             mono_depth_loss_mult=0.001,
+            optical_flow_loss_mult=0.001,
+            disparity_loss_mult=0.1,
             patch_warp_loss_mult=0.1,
             eval_num_rays_per_chunk=1024,
         ),
