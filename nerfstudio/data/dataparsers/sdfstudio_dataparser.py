@@ -189,6 +189,7 @@ class SDFStudio(DataParser):
                 indices = [i for i in indices if i % self.config.skip_every_for_val_split != 0]
 
         image_filenames = []
+        mask_filenames = []
         depth_images = []
         normal_images = []
         sensor_depth_images = []
@@ -204,6 +205,9 @@ class SDFStudio(DataParser):
                 continue
 
             image_filename = self.config.data / frame["rgb_path"]
+            if "mask_path" in frame:
+                mask_filename = self.config.data / frame["mask_path"]
+                mask_filenames.append(mask_filename)
 
             intrinsics = torch.tensor(frame["intrinsics"])
             camtoworld = torch.tensor(frame["camtoworld"])
@@ -362,6 +366,7 @@ class SDFStudio(DataParser):
 
         dataparser_outputs = DataparserOutputs(
             image_filenames=image_filenames,
+            mask_filenames=mask_filenames if len(mask_filenames) ==len(image_filenames) else None,
             cameras=cameras,
             scene_box=scene_box,
             additional_inputs=additional_inputs_dict,
