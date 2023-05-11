@@ -46,6 +46,7 @@ from nerfstudio.data.datamanagers.preprocessor.data_preprocessor import (
 )
 from nerfstudio.data.dataparsers.blender_dataparser import BlenderDataParserConfig
 from nerfstudio.data.dataparsers.dnerf_dataparser import DNeRFDataParserConfig
+from nerfstudio.data.dataparsers.our_dnerf_dataparser import OurDNeRFDataParserConfig
 from nerfstudio.data.dataparsers.friends_dataparser import FriendsDataParserConfig
 from nerfstudio.data.dataparsers.heritage_dataparser import HeritageDataParserConfig
 from nerfstudio.data.dataparsers.instant_ngp_dataparser import (
@@ -93,6 +94,7 @@ AnnotatedDataParserUnion = tyro.conf.OmitSubcommandPrefixes[  # Omit prefixes of
             "sdfstudio-data": SDFStudioDataParserConfig(),
             "heritage-data": HeritageDataParserConfig(),
             "our-data": OurDataParserConfig(),
+            "our-dnerf-data": OurDNeRFDataParserConfig(),
         },
         prefix_names=False,  # Omit prefixes in subcommands themselves.
     )
@@ -583,6 +585,31 @@ class OurDataManager(VanillaDataManager):
         depth = torch.from_numpy(depth)
         optical_flow = torch.from_numpy(optical_flow)
 
+        # Get indices of source rays whose reference cameras are not in training dataloader
+        reprojection_mask_indices = src_ray_bundle.camera_indices.eq(src_ray_bundle.camera_indices.to('cpu').max()) \
+            .long().to('cpu').squeeze().nonzero().squeeze() # size: (<num_rays, )
+
+        # Get reference cameras
+        ref_camera_indices = src_camera_indices + 1 # size: (num_rays, )
+        ref_camera_indices[reprojection_mask_indices] = 0
+        ref_cameras = self.train_dataset.cameras[ref_camera_indices]
+
+        # Get indices of reference rays
+        ref_ray_indices = torch.zeros(src_ray_indices.shape).long() # size: (num_rays, 3)
+        ref_ray_indices[:, 0] = ref_camera_indices # camera indices
+        ref_ray_indices[:, 1] = src_ray_indices[:, 1] + optical_flow[:, 1] # row indices, y_coords
+        ref_ray_indices[:, 2] = src_ray_indices[:, 2] + optical_flow[:, 0] # col indices, x_coords
+
+        # Get indices of reference rays whose resultant pixels are out of the border
+        mask_row = torch.logical_or(ref_ray_indices[:, 1] < 0, ref_ray_indices[:, 1] > image_height - 1)
+        mask_col = torch.logical_or(ref_ray_indices[:, 2] < 0, ref_ray_indices[:, 2] > image_width - 1)
+        disparity_mask_indices = torch.logical_or(mask_row, mask_col).long().to('cpu').\
+            squeeze().nonzero().squeeze() # size: (<num_rays, )
+        ref_ray_indices[disparity_mask_indices] = 0
+
+        # Generate ray bundle from reference cameras
+        ref_ray_bundle = self.train_ray_generator(ref_ray_indices)
+
         # ### Verification 1 (debugging only): heatmap of depth + normal + optical flow (x&y)
         # for _tested_camera in range(src_camera_ids.max()-1):
         #     _src_camera_ids = np.ones((1,), dtype=int) * _tested_camera
@@ -653,31 +680,6 @@ class OurDataManager(VanillaDataManager):
         # plt.imshow(_warped_img)
         # plt.title("warped image")
         # plt.show()
-
-        # Get indices of source rays whose reference cameras are not in training dataloader
-        reprojection_mask_indices = src_ray_bundle.camera_indices.eq(src_ray_bundle.camera_indices.to('cpu').max()) \
-            .long().to('cpu').squeeze().nonzero().squeeze() # size: (<num_rays, )
-
-        # Get reference cameras
-        ref_camera_indices = src_camera_indices + 1 # size: (num_rays, )
-        ref_camera_indices[reprojection_mask_indices] = 0
-        ref_cameras = self.train_dataset.cameras[ref_camera_indices]
-
-        # Get indices of reference rays
-        ref_ray_indices = torch.zeros(src_ray_indices.shape).long() # size: (num_rays, 3)
-        ref_ray_indices[:, 0] = ref_camera_indices # camera indices
-        ref_ray_indices[:, 1] = src_ray_indices[:, 1] + optical_flow[:, 1] # row indices, y_coords
-        ref_ray_indices[:, 2] = src_ray_indices[:, 2] + optical_flow[:, 0] # col indices, x_coords
-
-        # Get indices of reference rays whose resultant pixels are out of the border
-        mask_row = torch.logical_or(ref_ray_indices[:, 1] < 0, ref_ray_indices[:, 1] > image_height - 1)
-        mask_col = torch.logical_or(ref_ray_indices[:, 2] < 0, ref_ray_indices[:, 2] > image_width - 1)
-        disparity_mask_indices = torch.logical_or(mask_row, mask_col).long().to('cpu').\
-            squeeze().nonzero().squeeze() # size: (<num_rays, )
-        ref_ray_indices[disparity_mask_indices] = 0
-
-        # Generate ray bundle from reference cameras
-        ref_ray_bundle = self.train_ray_generator(ref_ray_indices)
 
         # Store results
         batch["normal"] = normal

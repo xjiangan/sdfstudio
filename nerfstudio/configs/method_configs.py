@@ -40,6 +40,7 @@ from nerfstudio.data.datamanagers.variable_res_datamanager import (
 )
 from nerfstudio.data.dataparsers.blender_dataparser import BlenderDataParserConfig
 from nerfstudio.data.dataparsers.dnerf_dataparser import DNeRFDataParserConfig
+from nerfstudio.data.dataparsers.our_dnerf_dataparser import OurDNeRFDataParserConfig
 from nerfstudio.data.dataparsers.friends_dataparser import FriendsDataParserConfig
 from nerfstudio.data.dataparsers.nerfstudio_dataparser import NerfstudioDataParserConfig
 from nerfstudio.data.dataparsers.our_dataparser import OurDataParserConfig
@@ -909,6 +910,28 @@ method_configs["dnerf"] = Config(
     },
 )
 
+method_configs["our-dnerf"] = Config(
+    method_name="our-dnerf",
+    pipeline=VanillaPipelineConfig(
+        datamanager=VanillaDataManagerConfig(dataparser=OurDNeRFDataParserConfig()),
+        model=VanillaModelConfig(
+            _target=NeRFModel,
+            enable_temporal_distortion=True,
+            temporal_distortion_params={"kind": TemporalDistortionKind.DNERF},
+        ),
+    ),
+    optimizers={
+        "fields": {
+            "optimizer": RAdamOptimizerConfig(lr=5e-4, eps=1e-08),
+            "scheduler": None,
+        },
+        "temporal_distortion": {
+            "optimizer": RAdamOptimizerConfig(lr=5e-4, eps=1e-08),
+            "scheduler": None,
+        },
+    },
+)
+
 method_configs["phototourism"] = Config(
     method_name="phototourism",
     trainer=TrainerConfig(
@@ -978,40 +1001,6 @@ method_configs["vanilla-nerf"] = Config(
     pipeline=VanillaPipelineConfig(
         datamanager=VanillaDataManagerConfig(
             dataparser=BlenderDataParserConfig(),
-        ),
-        model=VanillaModelConfig(_target=NeRFModel),
-    ),
-    optimizers={
-        "fields": {
-            "optimizer": RAdamOptimizerConfig(lr=5e-4, eps=1e-08),
-            "scheduler": None,
-        },
-        "temporal_distortion": {
-            "optimizer": RAdamOptimizerConfig(lr=5e-4, eps=1e-08),
-            "scheduler": None,
-        },
-    },
-)
-
-# New
-method_configs["nerfmm"] = Config(
-    method_name="nerfmm",
-    trainer=TrainerConfig(
-        steps_per_save=5000,
-        steps_per_eval_image=5000,
-        steps_per_eval_batch=5000,
-        steps_per_eval_all_images=100000,
-        max_num_iterations=500000,
-    ),
-    pipeline=VanillaPipelineConfig(
-        datamanager=VanillaDataManagerConfig(
-            dataparser=BlenderDataParserConfig(),
-            camera_optimizer=CameraOptimizerConfig(
-                mode="SO3xR3",
-                optimizer=AdamOptimizerConfig(lr=6e-4, eps=1e-8, weight_decay=1e-2),
-                position_noise_std=0.0,
-                orientation_noise_std=0.0,
-            ),
         ),
         model=VanillaModelConfig(_target=NeRFModel),
     ),
