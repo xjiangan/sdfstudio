@@ -88,8 +88,8 @@ class SDFStudio(DataParser):
                 continue
 
             image_filename = self.config.data / frame["rgb_path"]
-            depth_filename = self.config.data / frame["mono_depth_path"]
-            normal_filename = self.config.data / frame["mono_normal_path"]
+            depth_filename = frame.get("mono_depth_path")
+            normal_filename = frame.get("mono_normal_path")
             if "mask_path" in frame:
                 mask_filename = self.config.data / frame["mask_path"]
                 mask_filenames.append(mask_filename)
