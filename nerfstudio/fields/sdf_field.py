@@ -33,6 +33,7 @@ from nerfstudio.field_components.encodings import NeRFEncoding
 from nerfstudio.field_components.field_heads import FieldHeadNames
 from nerfstudio.field_components.spatial_distortions import SpatialDistortion
 from nerfstudio.fields.base_field import Field, FieldConfig
+from nerfstudio.viewer.server.viewer_elements import ViewerCheckbox, ViewerSlider
 
 try:
     import tinycudann as tcnn
@@ -145,6 +146,19 @@ class SDFField(Field):
         self.use_average_appearance_embedding = use_average_appearance_embedding
         self.use_grid_feature = self.config.use_grid_feature
         self.divide_factor = self.config.divide_factor
+        def on_change_update_beta(handle: ViewerCheckbox) -> None:
+            if handle.value:
+                self.deviation_network.variance.requires_grad = True
+            else:
+                self.deviation_network.variance.requires_grad = False
+                self.beta_viewer.value = self.deviation_network.variance.item()
+        def on_change_beta_value(handle: ViewerSlider) -> None:
+            if not self.update_beta.value:
+                with torch.no_grad():
+                    self.deviation_network.variance.data[0]= handle.value
+
+        self.beta_viewer = ViewerSlider("beta", self.config.beta_init, 0.0, 1.0, 0.01,cb_hook=on_change_beta_value)
+        self.update_beta = ViewerCheckbox("update beta", True, cb_hook=on_change_update_beta)
 
         growth_factor = np.exp((np.log(config.max_res) - np.log(config.base_res)) / (config.num_levels - 1))
 

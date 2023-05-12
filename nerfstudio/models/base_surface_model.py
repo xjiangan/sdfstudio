@@ -54,6 +54,7 @@ from nerfstudio.models.base_model import Model, ModelConfig
 from nerfstudio.utils import colormaps
 from nerfstudio.utils.colors import get_color
 from nerfstudio.utils.math import normalized_depth_scale_and_shift
+from nerfstudio.viewer.server.viewer_elements import ViewerNumber
 
 
 @dataclass
@@ -164,6 +165,10 @@ class SurfaceModel(Model):
         self.rgb_loss = L1Loss()
         self.eikonal_loss = MSELoss()
         self.depth_loss = ScaleAndShiftInvariantLoss(alpha=0.5, scales=1)
+        self.eikonal_weight = ViewerNumber("eikonal_weight", self.config.eikonal_loss_mult)
+        self.fg_mask_weight = ViewerNumber("fg_mask_weight", self.config.fg_mask_loss_mult)
+        self.mono_normal_weight = ViewerNumber("mono_normal_weight", self.config.mono_normal_loss_mult)
+        self.mono_depth_weight = ViewerNumber("mono_depth_weight", self.config.mono_depth_loss_mult)
 
         # metrics
         self.psnr = PeakSignalNoiseRatio(data_range=1.0)
@@ -286,33 +291,33 @@ class SurfaceModel(Model):
         if self.training:
             # eikonal loss
             grad_theta = outputs["eik_grad"]
-            loss_dict["eikonal_loss"] = ((grad_theta.norm(2, dim=-1) - 1) ** 2).mean() * self.config.eikonal_loss_mult
+            loss_dict["eikonal_loss"] = ((grad_theta.norm(2, dim=-1) - 1) ** 2).mean() * self.eikonal_weight.value
 
             # foreground mask loss
-            if "fg_mask" in batch and self.config.fg_mask_loss_mult > 0.0:
+            if "fg_mask" in batch and self.fg_mask_weight.value > 0.0:
                 fg_label = batch["fg_mask"].float().to(self.device)
                 weights_sum = outputs["weights"].sum(dim=1).clip(1e-3, 1.0 - 1e-3)
                 loss_dict["fg_mask_loss"] = (
-                    F.binary_cross_entropy(weights_sum, fg_label) * self.config.fg_mask_loss_mult
+                    F.binary_cross_entropy(weights_sum, fg_label) * self.fg_mask_weight.value
                 )
 
             # monocular normal loss
-            if "normal" in batch and self.config.mono_normal_loss_mult > 0.0:
+            if "normal" in batch and self.mono_normal_weight.value > 0.0:
                 normal_gt = batch["normal"].to(self.device)
                 normal_pred = outputs["normal"]
                 loss_dict["normal_loss"] = (
-                    monosdf_normal_loss(normal_pred, normal_gt) * self.config.mono_normal_loss_mult
+                    monosdf_normal_loss(normal_pred, normal_gt) * self.mono_normal_weight.value
                 )
 
             # monocular depth loss
-            if "depth" in batch and self.config.mono_depth_loss_mult > 0.0:
+            if "depth" in batch and self.mono_depth_weight.value > 0.0:
                 depth_gt = batch["depth"].to(self.device)[..., None]
                 depth_pred = outputs["depth"]
 
                 mask = torch.ones_like(depth_gt).reshape(1, 32, -1).bool()
                 loss_dict["depth_loss"] = (
                     self.depth_loss(depth_pred.reshape(1, 32, -1), (depth_gt * 50 + 0.5).reshape(1, 32, -1), mask)
-                    * self.config.mono_depth_loss_mult
+                    * self.mono_depth_weight.value
                 )
 
         return loss_dict
