@@ -32,7 +32,8 @@ from nerfstudio.data.dataparsers.base_dataparser import (
 from nerfstudio.data.scene_box import SceneBox
 from nerfstudio.utils.colors import get_color
 from nerfstudio.utils.io import load_from_json
-
+from typing_extensions import Literal
+from nerfstudio.cameras import camera_utils
 
 @dataclass
 class OurDNeRFDataParserConfig(DataParserConfig):
@@ -46,6 +47,16 @@ class OurDNeRFDataParserConfig(DataParserConfig):
     """How much to scale the camera origins by."""
     alpha_color: str = "white"
     """alpha color of background"""
+    scene_scale: float = 1.0
+    """How much to scale the region of interest by."""
+    orientation_method: Literal["pca", "up", "none"] = "none"
+    """The method to use for orientation."""
+    center_poses: bool = False
+    """Whether to center the poses."""
+    auto_scale_poses: bool = False
+    """Whether to automatically scale the poses to fit in +/- 1 bounding box."""
+    train_split_percentage: float = 0.9
+    """The percent of images to use for training. The remaining images are for eval."""
 
 
 @dataclass
@@ -68,8 +79,8 @@ class DNeRF(DataParser):
 
         meta = load_from_json(self.data / f"transforms.json")
         img_num = len(meta["frames"])
-        img_train_num = int(0.9 * img_num)
-        img_val_num = int(0.1 * img_num)
+        img_train_num = int(self.config.train_split_percentage * img_num)
+        img_val_num = img_num - img_train_num
         image_filenames = []
         poses = []
 
@@ -95,14 +106,31 @@ class DNeRF(DataParser):
         fy = meta["fl_y"]
         cx = image_width / 2.0
         cy = image_height / 2.0
-        camera_to_world = torch.from_numpy(poses[:, :3])  # camera to world transform
+
+        orientation_method = self.config.orientation_method
+        poses = torch.from_numpy(np.array(poses).astype(np.float32))
+        poses, _ = camera_utils.auto_orient_and_center_poses(
+            poses,
+            method=orientation_method,
+            center_poses=self.config.center_poses,
+        )
+
+        # Scale poses
+        scale_factor = 1.0
+        if self.config.auto_scale_poses:
+            scale_factor /= torch.max(torch.abs(poses[:, :3, 3]))
+        poses[:, :3, 3] *= scale_factor * self.config.scale_factor
 
         # in x,y,z order
-        camera_to_world[..., 3] *= self.scale_factor
-        scene_box = SceneBox(aabb=torch.tensor([[-1.5, -1.5, -1.5], [1.5, 1.5, 1.5]], dtype=torch.float32))
+        aabb_scale = self.config.scene_scale
+        scene_box = SceneBox(
+            aabb=torch.tensor(
+                [[-aabb_scale, -aabb_scale, -aabb_scale], [aabb_scale, aabb_scale, aabb_scale]], dtype=torch.float32
+            )
+        )
 
         cameras = Cameras(
-            camera_to_worlds=camera_to_world,
+            camera_to_worlds=poses[:, :3, :4],
             fx=fx,
             fy=fy,
             cx=cx,
@@ -112,7 +140,10 @@ class DNeRF(DataParser):
         )
 
         dataparser_outputs = DataparserOutputs(
-            image_filenames=image_filenames, cameras=cameras, alpha_color=alpha_color_tensor, scene_box=scene_box
+            image_filenames=image_filenames,
+            cameras=cameras,
+            alpha_color=alpha_color_tensor,
+            scene_box=scene_box,
         )
 
         return dataparser_outputs
