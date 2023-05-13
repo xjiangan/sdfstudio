@@ -1,4 +1,4 @@
-# Copyright 2022 The Nerfstudio Team. All rights reserved.
+# Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -32,7 +32,6 @@ import numpy as np
 import torch
 import tyro
 from rich import box, style
-from rich.console import Console
 from rich.panel import Panel
 from rich.progress import (
     BarColumn,
@@ -56,9 +55,7 @@ from nerfstudio.model_components import renderers
 from nerfstudio.pipelines.base_pipeline import Pipeline
 from nerfstudio.utils import colormaps, install_checks
 from nerfstudio.utils.eval_utils import eval_setup
-from nerfstudio.utils.rich_utils import ItersPerSecColumn
-
-CONSOLE = Console(width=120)
+from nerfstudio.utils.rich_utils import CONSOLE, ItersPerSecColumn
 
 
 def _render_trajectory_video(
@@ -313,6 +310,14 @@ class RenderTrajectory:
     """How to save output data."""
     interpolation_steps: int = 10
     """Number of interpolation steps between eval dataset cameras."""
+    order_poses: bool = False
+    """Whether to order camera poses by proximity (only for interpolate trajectory)."""
+    adjust_frame_rate: bool = False
+    """Whether to adjust the frame rate of the output video (only for interpolate trajectory)."""
+    frame_rate: int = 24
+    """Frame rate of the output video (only for interpolate trajectory)."""
+    seconds_between_poses: int = 3
+    """Seconds between poses for interpolated camera paths."""
     eval_num_rays_per_chunk: Optional[int] = None
     """Specifies number of rays per chunk during eval."""
     colormap_options: colormaps.ColormapOptions = colormaps.ColormapOptions()
@@ -353,8 +358,13 @@ class RenderTrajectory:
             camera_path = get_path_from_json(camera_path)
         elif self.traj == "interpolate":
             camera_type = CameraType.PERSPECTIVE
+            if self.adjust_frame_rate:
+                self.interpolation_steps = self.seconds_between_poses * self.frame_rate
+                seconds = self.seconds_between_poses * len(pipeline.datamanager.eval_dataloader.cameras)
             camera_path = get_interpolated_camera_path(
-                cameras=pipeline.datamanager.eval_dataloader.cameras, steps=self.interpolation_steps
+                cameras=pipeline.datamanager.eval_dataloader.cameras,
+                steps=self.interpolation_steps,
+                order_poses=self.order_poses,
             )
         else:
             assert_never(self.traj)
