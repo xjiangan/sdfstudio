@@ -154,6 +154,7 @@ class ExportTSDFMesh(Exporter):
     """If using xatlas for unwrapping, the pixels per side of the texture image."""
     target_num_faces: Optional[int] = 50000
     """Target number of faces for the mesh to texture."""
+    save_depth: bool = False
 
     def main(self) -> None:
         """Export mesh"""
@@ -174,6 +175,7 @@ class ExportTSDFMesh(Exporter):
             use_bounding_box=self.use_bounding_box,
             bounding_box_min=self.bounding_box_min,
             bounding_box_max=self.bounding_box_max,
+            save_depth=self.save_depth,
         )
 
         # possibly
@@ -235,6 +237,7 @@ class ExportPoissonMesh(Exporter):
     """Target number of faces for the mesh to texture."""
     std_ratio: float = 10.0
     """Threshold based on STD of the average distances across the point cloud to remove outliers."""
+    poisson_depth: int = 10
 
     def validate_pipeline(self, pipeline: Pipeline) -> None:
         """Check that the pipeline is valid for this exporter."""
@@ -299,7 +302,7 @@ class ExportPoissonMesh(Exporter):
             CONSOLE.print("[bold green]:white_check_mark: Saving Point Cloud")
 
         CONSOLE.print("Computing Mesh... this may take a while.")
-        mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=9)
+        mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=self.poisson_depth)
         vertices_to_remove = densities < np.quantile(densities, 0.1)
         mesh.remove_vertices_by_mask(vertices_to_remove)
         print("\033[A\033[A")

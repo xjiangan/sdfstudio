@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
+import cv2 as cv
+import matplotlib.pyplot as plt
 import numpy as np
 import pymeshlab
 import torch
@@ -282,6 +284,7 @@ def export_tsdf_mesh(
     use_bounding_box: bool = True,
     bounding_box_min: Tuple[float, float, float] = (-1.0, -1.0, -1.0),
     bounding_box_max: Tuple[float, float, float] = (1.0, 1.0, 1.0),
+    save_depth=False,
 ) -> None:
     """Export a TSDF mesh from a pipeline.
 
@@ -327,6 +330,14 @@ def export_tsdf_mesh(
         rendered_resolution_scaling_factor=1.0 / downscale_factor,
         disable_distortion=True,
     )
+    if save_depth:
+        image_filenames: List[Path] = dataparser_outputs.image_filenames
+        depth_dir = output_dir / "depth"
+        depth_dir.mkdir(parents=True, exist_ok=True)
+        for filename, depth in zip(image_filenames, depth_images):
+            depth = depth[..., 0]
+            save_depth_path = (depth_dir / filename.name).as_posix()
+            plt.imsave(save_depth_path, depth, cmap="viridis")
 
     # camera extrinsics and intrinsics
     c2w: TensorType["N", 3, 4] = cameras.camera_to_worlds.to(device)
